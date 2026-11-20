@@ -6,10 +6,17 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { DEMO_SEED_DATA, USER_IDS } from '../db/seed';
-import { generateCryptographicQrCode } from '../lib/ledgerEngine';
 import { offlineQueue, type SyncOutcome } from '../lib/offlineQueue';
+import {
+  API_BASE_URL,
+  ApiHttpError,
+  apiClient,
+  isRemoteApiConfigured,
+  loadLocalDataset,
+  saveLocalDataset,
+  setLocalSessionUserId,
+  type DemoPresetRole,
+} from '../services/apiClient';
 import type {
   DemoSeedDataset,
   Event,
@@ -19,94 +26,21 @@ import type {
   Stamp,
   Tenant,
   TicketRoleType,
-  TicketUid,
   User,
   ViewMode,
 } from '../types/types';
 
-// ============================================================================
-// SUPABASE CLIENT INITIALIZATION (AUTOMATIC DEMO FALLBACK IF UNCONFIGURED)
-// ============================================================================
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
-export const isSupabaseConfigured = Boolean(
-  SUPABASE_URL &&
-    SUPABASE_ANON_KEY &&
-    SUPABASE_URL.startsWith('http') &&
-    SUPABASE_ANON_KEY.length > 20
-);
-
-let supabaseSingleton: SupabaseClient | null = null;
-
-export function getSupabaseClient(): SupabaseClient | null {
-  if (!isSupabaseConfigured || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return null;
-  }
-  if (!supabaseSingleton) {
-    supabaseSingleton = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    });
-  }
-  return supabaseSingleton;
-}
+export type { DemoPresetRole } from '../services/apiClient';
 
 // ============================================================================
-// LOCAL DEMO PERSISTENCE KEYS
+// LOCAL SESSION STORAGE KEYS
 // ============================================================================
 
-const DEMO_STORE_KEY = 'rallypos_demo_dataset_v1';
-const DEMO_SESSION_USER_ID_KEY = 'rallypos_demo_session_user_id_v1';
 const ACTIVE_EVENT_ID_KEY = 'rallypos_active_event_id_v1';
-
-function cloneSeedDataset(): DemoSeedDataset {
-  return JSON.parse(JSON.stringify(DEMO_SEED_DATA)) as DemoSeedDataset;
-}
-
-function loadDemoDataset(): DemoSeedDataset {
-  if (typeof window === 'undefined') return cloneSeedDataset();
-  try {
-    const raw = window.localStorage.getItem(DEMO_STORE_KEY);
-    if (!raw) return cloneSeedDataset();
-    const parsed = JSON.parse(raw) as DemoSeedDataset;
-    if (!Array.isArray(parsed.users) || !Array.isArray(parsed.events)) {
-      return cloneSeedDataset();
-    }
-    return parsed;
-  } catch {
-    return cloneSeedDataset();
-  }
-}
-
-function saveDemoDataset(dataset: DemoSeedDataset): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(DEMO_STORE_KEY, JSON.stringify(dataset));
-  } catch {
-    // Ignore storage quota exceptions
-  }
-}
-
-function createUuid(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
 
 // ============================================================================
 // CONTEXT CONTRACTS
 // ============================================================================
-
-export type DemoPresetRole = 'fresh_buyer' | 'active_buyer' | 'merchant' | 'admin';
 
 export interface RegisterPayload {
   email: string;
@@ -170,7 +104,9 @@ export interface AppContextValue {
   getParticipantForEvent: (eventId: string) => EventParticipant | null;
   getTenantForEvent: (eventId: string) => Tenant | null;
 
-  // Sync & Demo Utilities
+  // Dataset State & Sync Utilities
+  updateDataset: (updater: (prev: DemoSeedDataset) => DemoSeedDataset) => void;
+  refreshDataset: () => Promise<void>;
   triggerManualSync: () => Promise<void>;
   resetDemoState: () => void;
 }
@@ -193,142 +129,137 @@ const INITIAL_OFFLINE_STATUS: OfflineQueueStatusSnapshot = {
 // ============================================================================
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [dataset, setDataset] = useState<DemoSeedDataset>(() => loadDemoDataset());
+  const [dataset, setDataset] = useState<DemoSeedDataset>(() => loadLocalDataset());
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(DEMO_SESSION_USER_ID_KEY);
+    return window.localStorage.getItem('rallypos_demo_session_user_id_v1');
   });
   const [activeEventId, setActiveEventIdState] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return window.localStorage.getItem(ACTIVE_EVENT_ID_KEY);
   });
-  const [isLoading, setIsLoading] = useState<boolean>(isSupabaseConfigured);
+  const [isLoading, setIsLoading] = useState<boolean>(isRemoteApiConfigured);
+  const [isFallbackMode, setIsFallbackMode] = useState<boolean>(
+    !isRemoteApiConfigured
+  );
   const [offlineStatus, setOfflineStatus] =
     useState<OfflineQueueStatusSnapshot>(INITIAL_OFFLINE_STATUS);
 
-  const supabase = useMemo(() => getSupabaseClient(), []);
-  const isDemoMode = !isSupabaseConfigured;
+  const isDemoMode = !isRemoteApiConfigured || isFallbackMode;
 
-  // Persist demo dataset edits locally
-  useEffect(() => {
-    if (isDemoMode) {
-      saveDemoDataset(dataset);
-    }
-  }, [dataset, isDemoMode]);
-
-  // Hydrate Supabase session & cloud tables when Supabase env vars are configured
-  const hydrateSupabaseData = useCallback(
-    async (userId: string) => {
-      if (!supabase) return;
-      const [
-        usersRes,
-        eventsRes,
-        ticketsRes,
-        participantsRes,
-        tenantsRes,
-        itemsRes,
-        stampsRes,
-        txRes,
-        chatRes,
-      ] = await Promise.all([
-        supabase.from('users').select('*').eq('id', userId),
-        supabase.from('events').select('*').order('created_at', { ascending: false }),
-        supabase.from('ticket_uids').select('*'),
-        supabase.from('event_participants').select('*'),
-        supabase.from('tenants').select('*'),
-        supabase.from('tenant_items').select('*'),
-        supabase.from('stamps').select('*'),
-        supabase.from('transactions').select('*').order('created_at', { ascending: false }),
-        supabase.from('event_chat_messages').select('*').order('created_at', { ascending: false }),
-      ]);
-
-      setDataset((prev) => ({
-        users: (usersRes.data as User[] | null) ?? prev.users,
-        events: (eventsRes.data as Event[] | null) ?? prev.events,
-        ticket_uids: (ticketsRes.data as TicketUid[] | null) ?? prev.ticket_uids,
-        event_participants:
-          (participantsRes.data as EventParticipant[] | null) ?? prev.event_participants,
-        tenants: (tenantsRes.data as Tenant[] | null) ?? prev.tenants,
-        tenant_items: (itemsRes.data as DemoSeedDataset['tenant_items'] | null) ?? prev.tenant_items,
-        stamps: (stampsRes.data as Stamp[] | null) ?? prev.stamps,
-        transactions:
-          (txRes.data as DemoSeedDataset['transactions'] | null) ?? prev.transactions,
-        event_chat_messages:
-          (chatRes.data as DemoSeedDataset['event_chat_messages'] | null) ??
-          prev.event_chat_messages,
-      }));
+  const updateDataset = useCallback(
+    (updater: (prev: DemoSeedDataset) => DemoSeedDataset) => {
+      setDataset((prev) => {
+        const next = updater(prev);
+        if (isDemoMode) {
+          saveLocalDataset(next);
+        }
+        return next;
+      });
     },
-    [supabase]
+    [isDemoMode]
   );
 
-  useEffect(() => {
-    if (!supabase) {
-      setIsLoading(false);
-      return;
-    }
+  // Hydrate events & participant state via REST API client (with automatic local fallback)
+  const refreshDataset = useCallback(async () => {
+    const res = await apiClient.getEvents();
+    setIsFallbackMode(apiClient.isFallbackActive());
+    setDataset((prev) => {
+      const mergedUsers =
+        Array.isArray(res.users) && res.users.length > 0 ? res.users : prev.users;
+      return {
+        users: mergedUsers,
+        events: res.events ?? prev.events,
+        ticket_uids: res.ticket_uids ?? prev.ticket_uids,
+        event_participants: res.participants ?? prev.event_participants,
+        tenants: res.tenants ?? prev.tenants,
+        tenant_items: res.tenant_items ?? prev.tenant_items,
+        stamps: res.stamps ?? prev.stamps,
+        transactions: res.transactions ?? prev.transactions,
+        event_chat_messages: res.meetups ?? prev.event_chat_messages,
+      };
+    });
+  }, []);
 
+  // Bootstrap session & events on initial mount
+  useEffect(() => {
     let mounted = true;
 
-    const initAuth = async () => {
+    const initApp = async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (mounted && session?.user) {
-          setCurrentUserId(session.user.id);
-          await hydrateSupabaseData(session.user.id);
+        const sessionRes = await apiClient.getSession();
+        if (mounted && sessionRes.user) {
+          const user = sessionRes.user;
+          setCurrentUserId(user.id);
+          setDataset((prev) => {
+            const exists = prev.users.some((u) => u.id === user.id);
+            return {
+              ...prev,
+              users: exists
+                ? prev.users.map((u) => (u.id === user.id ? user : u))
+                : [...prev.users, user],
+            };
+          });
+        }
+        await refreshDataset();
+        if (mounted) {
+          setIsFallbackMode(apiClient.isFallbackActive());
+        }
+      } catch {
+        if (mounted) {
+          setIsFallbackMode(apiClient.isFallbackActive());
         }
       } finally {
-        if (mounted) setIsLoading(false);
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     };
 
-    void initAuth();
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setCurrentUserId(session.user.id);
-        void hydrateSupabaseData(session.user.id);
-      } else {
-        setCurrentUserId(null);
-      }
-    });
+    void initApp();
 
     return () => {
       mounted = false;
-      listener.subscription.unsubscribe();
     };
-  }, [supabase, hydrateSupabaseData]);
+  }, [refreshDataset]);
 
   // Offline Queue Subscription & Auto-Sync
   const syncTransactionHandler = useCallback(
     async (queued: OfflineQueuedTransaction): Promise<SyncOutcome> => {
-      if (supabase) {
-        const { error } = await supabase.rpc('process_pos_checkout', {
-          p_event_id: queued.eventId,
-          p_tenant_id: queued.tenantId,
-          p_buyer_qr_code: queued.buyerQrCode,
-          p_actual_amount_idr: queued.actualAmountIdr,
-          p_client_tx_id: queued.clientTxId,
-          p_item_summary: queued.itemSummary,
+      try {
+        await apiClient.processPosCheckout({
+          client_tx_id: queued.clientTxId,
+          event_id: queued.eventId,
+          tenant_id: queued.tenantId,
+          buyer_qr_code: queued.buyerQrCode,
+          actual_amount_idr: queued.actualAmountIdr,
+          item_summary: queued.itemSummary,
         });
-        if (!error) {
-          return { outcome: 'synced' };
+        setIsFallbackMode(apiClient.isFallbackActive());
+        return { outcome: 'synced' };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Sync failed';
+        if (
+          err instanceof ApiHttpError &&
+          err.status >= 400 &&
+          err.status < 500 &&
+          (message.includes('COOLDOWN_ACTIVE') ||
+            message.includes('not registered') ||
+            message.includes('not active'))
+        ) {
+          return { outcome: 'permanent_error', message };
         }
         if (
-          error.message.includes('COOLDOWN_ACTIVE') ||
-          error.message.includes('not registered') ||
-          error.message.includes('not active')
+          message.includes('COOLDOWN_ACTIVE') ||
+          message.includes('not registered') ||
+          message.includes('not active')
         ) {
-          return { outcome: 'permanent_error', message: error.message };
+          return { outcome: 'permanent_error', message };
         }
-        return { outcome: 'retryable_error', message: error.message };
+        return { outcome: 'retryable_error', message };
       }
-
-      // Demo Mode offline sync simulation
-      return { outcome: 'synced' };
     },
-    [supabase]
+    []
   );
 
   useEffect(() => {
@@ -377,15 +308,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  const persistDemoSessionUser = useCallback((userId: string | null) => {
+  const persistSessionUser = useCallback((userId: string | null) => {
     setCurrentUserId(userId);
-    if (typeof window !== 'undefined') {
-      if (userId) {
-        window.localStorage.setItem(DEMO_SESSION_USER_ID_KEY, userId);
-      } else {
-        window.localStorage.removeItem(DEMO_SESSION_USER_ID_KEY);
-      }
-    }
+    setLocalSessionUserId(userId);
   }, []);
 
   // --------------------------------------------------------------------------
@@ -407,199 +332,100 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         throw new Error('Password must be at least 6 characters.');
       }
 
-      if (supabase) {
-        const { data, error } = await supabase.auth.signUp({
-          email: normalizedEmail,
-          password,
-          options: {
-            data: { username: cleanUsername },
-          },
-        });
-        if (error) throw new Error(error.message);
-        if (!data.user) throw new Error('Registration did not return a user.');
-
-        await hydrateSupabaseData(data.user.id);
-        const { data: userRow } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
-
-        if (!userRow) {
-          throw new Error('Account created. Please verify your email before signing in.');
-        }
-        return userRow as User;
-      }
-
-      // Demo Mode Registration (defaults strictly to Buyer Mode)
-      const duplicateEmail = dataset.users.some(
-        (u) => u.email.toLowerCase() === normalizedEmail
-      );
-      if (duplicateEmail) {
-        throw new Error('An account with this email already exists.');
-      }
-
-      const duplicateUsername = dataset.users.some(
-        (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
-      );
-      if (duplicateUsername) {
-        throw new Error('That username is already taken.');
-      }
-
-      const nowIso = new Date().toISOString();
-      const newUser: User = {
-        id: createUuid(),
+      const { user } = await apiClient.register({
         email: normalizedEmail,
         username: cleanUsername,
-        password_hash: `DEMO_PW_${password}`,
-        is_merchant: false,
-        is_admin: false,
-        active_view_mode: 'buyer',
-        merchant_brand_name: null,
-        merchant_bio: null,
-        lifetime_actual_spent_idr: 0,
-        lifetime_sales_idr: 0,
-        events_count: 0,
-        earned_badges: [],
-        created_at: nowIso,
-        updated_at: nowIso,
-      };
+        password,
+      });
+      setIsFallbackMode(apiClient.isFallbackActive());
 
-      setDataset((prev) => ({
-        ...prev,
-        users: [...prev.users, newUser],
-      }));
-      persistDemoSessionUser(newUser.id);
-      return newUser;
+      setDataset((prev) => {
+        const exists = prev.users.some((u) => u.id === user.id);
+        return {
+          ...prev,
+          users: exists
+            ? prev.users.map((u) => (u.id === user.id ? user : u))
+            : [...prev.users, user],
+        };
+      });
+      persistSessionUser(user.id);
+      await refreshDataset();
+      return user;
     },
-    [supabase, hydrateSupabaseData, dataset.users, persistDemoSessionUser]
+    [persistSessionUser, refreshDataset]
   );
 
   const loginWithEmail = useCallback(
     async ({ email, password }: LoginPayload): Promise<User> => {
       const normalizedEmail = email.trim().toLowerCase();
-
-      if (supabase) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
-        if (error) throw new Error(error.message);
-        if (!data.user) throw new Error('Login failed.');
-
-        await hydrateSupabaseData(data.user.id);
-        const { data: userRow, error: profileErr } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
-
-        if (profileErr || !userRow) {
-          throw new Error(profileErr?.message ?? 'User profile not found.');
-        }
-        return userRow as User;
-      }
-
-      const matched = dataset.users.find(
-        (u) => u.email.toLowerCase() === normalizedEmail
-      );
-      if (!matched) {
-        throw new Error('No account found with that email. Try Demo Account or Sign Up.');
-      }
-
-      const isSeededDemoUser = matched.password_hash.startsWith('DEMO_HASH_');
-      const expectedLocalPassword = `DEMO_PW_${password}`;
-      if (!isSeededDemoUser && matched.password_hash !== expectedLocalPassword) {
-        throw new Error('Incorrect password.');
+      if (!normalizedEmail || !normalizedEmail.includes('@')) {
+        throw new Error('Please enter a valid email address.');
       }
       if (password.length < 1) {
         throw new Error('Please enter your password.');
       }
 
-      persistDemoSessionUser(matched.id);
-      return matched;
+      const { user } = await apiClient.login({
+        email: normalizedEmail,
+        password,
+      });
+      setIsFallbackMode(apiClient.isFallbackActive());
+
+      setDataset((prev) => {
+        const exists = prev.users.some((u) => u.id === user.id);
+        return {
+          ...prev,
+          users: exists
+            ? prev.users.map((u) => (u.id === user.id ? user : u))
+            : [...prev.users, user],
+        };
+      });
+      persistSessionUser(user.id);
+      await refreshDataset();
+      return user;
     },
-    [supabase, hydrateSupabaseData, dataset.users, persistDemoSessionUser]
+    [persistSessionUser, refreshDataset]
   );
 
   const loginWithGoogle = useCallback(async (): Promise<void> => {
-    if (!supabase) {
+    if (!isRemoteApiConfigured || isFallbackMode) {
       throw new Error(
-        'Google OAuth requires Supabase credentials. Use "Continue with Demo Account" for instant local testing.'
+        'Google OAuth requires a running backend configured via VITE_API_BASE_URL. Use "Launch Demo Preview" for instant standalone testing.'
       );
     }
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/events`,
-      },
-    });
-    if (error) throw new Error(error.message);
-  }, [supabase]);
+    window.location.assign(
+      `${API_BASE_URL}/api/auth/google?redirect=${encodeURIComponent(
+        `${window.location.origin}/events`
+      )}`
+    );
+  }, [isFallbackMode]);
 
   const loginWithDemoAccount = useCallback(
     async (preset: DemoPresetRole = 'fresh_buyer'): Promise<User> => {
-      if (preset === 'fresh_buyer') {
-        const existingGuest = dataset.users.find(
-          (u) => u.email === 'demo.explorer@rallypos.id'
-        );
-        if (existingGuest) {
-          persistDemoSessionUser(existingGuest.id);
-          return existingGuest;
-        }
+      const { user } = await apiClient.loginDemo(preset);
+      setIsFallbackMode(apiClient.isFallbackActive());
 
-        const nowIso = new Date().toISOString();
-        const freshDemoBuyer: User = {
-          id: createUuid(),
-          email: 'demo.explorer@rallypos.id',
-          username: 'DemoExplorer',
-          password_hash: 'DEMO_HASH_EXPLORER',
-          is_merchant: false,
-          is_admin: false,
-          active_view_mode: 'buyer',
-          merchant_brand_name: null,
-          merchant_bio: null,
-          lifetime_actual_spent_idr: 0,
-          lifetime_sales_idr: 0,
-          events_count: 0,
-          earned_badges: [],
-          created_at: nowIso,
-          updated_at: nowIso,
-        };
-
-        setDataset((prev) => ({
+      setDataset((prev) => {
+        const exists = prev.users.some((u) => u.id === user.id);
+        return {
           ...prev,
-          users: [...prev.users, freshDemoBuyer],
-        }));
-        persistDemoSessionUser(freshDemoBuyer.id);
-        return freshDemoBuyer;
-      }
-
-      const targetId =
-        preset === 'active_buyer'
-          ? USER_IDS.BUYER_01
-          : preset === 'merchant'
-            ? USER_IDS.MERCHANT_01
-            : USER_IDS.ADMIN;
-
-      const user = dataset.users.find((u) => u.id === targetId);
-      if (!user) {
-        throw new Error('Demo account could not be found. Try resetting demo state.');
-      }
-
-      persistDemoSessionUser(user.id);
+          users: exists
+            ? prev.users.map((u) => (u.id === user.id ? user : u))
+            : [...prev.users, user],
+        };
+      });
+      persistSessionUser(user.id);
+      await refreshDataset();
       return user;
     },
-    [dataset.users, persistDemoSessionUser]
+    [persistSessionUser, refreshDataset]
   );
 
   const logout = useCallback(async (): Promise<void> => {
-    if (supabase) {
-      await supabase.auth.signOut();
-    }
-    persistDemoSessionUser(null);
+    await apiClient.logout();
+    persistSessionUser(null);
     setActiveEventId(null);
-  }, [supabase, persistDemoSessionUser, setActiveEventId]);
+  }, [persistSessionUser, setActiveEventId]);
 
   // --------------------------------------------------------------------------
   // BUYER <-> MERCHANT WORKSPACE MODE SWITCHER & ONBOARDING
@@ -609,31 +435,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (mode: ViewMode): Promise<void> => {
       if (!currentUser) return;
       if (mode === 'merchant' && !currentUser.is_merchant) {
-        throw new Error('Complete "Become a Merchant" onboarding first.');
+        throw new Error('Complete "Unlock Your Booth" onboarding first.');
       }
 
-      if (supabase) {
-        const { error } = await supabase
-          .from('users')
-          .update({ active_view_mode: mode })
-          .eq('id', currentUser.id);
-        if (error) throw new Error(error.message);
-      }
+      const { user: updatedUser } = await apiClient.switchViewMode(
+        mode,
+        currentUser.id
+      );
+      setIsFallbackMode(apiClient.isFallbackActive());
 
-      setDataset((prev) => ({
+      updateDataset((prev) => ({
         ...prev,
         users: prev.users.map((u) =>
-          u.id === currentUser.id
-            ? { ...u, active_view_mode: mode, updated_at: new Date().toISOString() }
-            : u
+          u.id === currentUser.id ? updatedUser : u
         ),
       }));
     },
-    [currentUser, supabase]
+    [currentUser, updateDataset]
   );
 
   // --------------------------------------------------------------------------
-  // TICKET UID JOIN GATE (ENROLLS USER, MINTS EV-XXXXXX QR & UNLOCKS STAMP #1)
+  // TICKET CODE CHECK-IN GATE (ENROLLS USER, MINTS EV-XXXXXX QR & STAMP #1)
   // --------------------------------------------------------------------------
 
   const joinEventWithTicketUid = useCallback(
@@ -654,229 +476,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const normalizedCode = uidCode.trim().toUpperCase();
       if (!normalizedCode) {
-        throw new Error('Please enter your Ticket UID.');
+        throw new Error('Please enter your Event Ticket Code.');
       }
 
-      const targetEvent = dataset.events.find((e) => e.id === eventId);
-      if (!targetEvent) {
-        throw new Error('Selected event was not found.');
-      }
-      if (targetEvent.status !== 'active') {
-        throw new Error('Only active events accept new Ticket UID registrations.');
-      }
-
-      if (supabase) {
-        const { error } = await supabase.rpc('claim_ticket_uid', {
-          p_event_id: eventId,
-          p_uid_code: normalizedCode,
-          p_booth_name: boothName ?? null,
-          p_booth_number: boothNumber ?? null,
-          p_booth_bio: currentUser.merchant_bio ?? '',
-        });
-        if (error) throw new Error(error.message);
-        await hydrateSupabaseData(currentUser.id);
-
-        // Fetch fresh records after RPC
-        const { data: partData } = await supabase
-          .from('event_participants')
-          .select('*')
-          .eq('event_id', eventId)
-          .eq('user_id', currentUser.id)
-          .single();
-
-        const { data: stampData } = await supabase
-          .from('stamps')
-          .select('*')
-          .eq('event_id', eventId)
-          .eq('participant_id', (partData as EventParticipant).id)
-          .eq('stamp_type', 'checkin')
-          .single();
-
-        const { data: tenantData } = await supabase
-          .from('tenants')
-          .select('*')
-          .eq('event_id', eventId)
-          .eq('user_id', currentUser.id)
-          .maybeSingle();
-
-        setActiveEventId(eventId);
-        return {
-          event: targetEvent,
-          roleType: tenantData ? 'merchant' : 'buyer',
-          participant: partData as EventParticipant,
-          tenant: (tenantData as Tenant | null) ?? null,
-          checkInStamp: stampData as Stamp,
-          isNewJoin: true,
-        };
-      }
-
-      // Demo Mode Atomic Join Simulation
-      const ticket = dataset.ticket_uids.find(
-        (t) =>
-          t.event_id === eventId && t.uid_code.toUpperCase() === normalizedCode
+      const res = await apiClient.checkInEvent(
+        eventId,
+        {
+          uid_code: normalizedCode,
+          booth_name: boothName,
+          booth_number: boothNumber,
+          booth_bio: currentUser.merchant_bio ?? '',
+        },
+        currentUser.id
       );
+      setIsFallbackMode(apiClient.isFallbackActive());
 
-      if (!ticket) {
-        throw new Error(
-          `Ticket UID "${normalizedCode}" is invalid for ${targetEvent.name}. Try TKT-DEMO-BYR or TKT-DEMO-SLR.`
-        );
+      // Synchronize full dataset state cleanly
+      if (apiClient.isFallbackActive()) {
+        setDataset(loadLocalDataset());
+      } else {
+        await refreshDataset();
       }
-      if (ticket.claimed_by_user_id && ticket.claimed_by_user_id !== currentUser.id) {
-        throw new Error('This Ticket UID has already been claimed by another user.');
-      }
-
-      const nowIso = new Date().toISOString();
-      const existingCodes = new Set(
-        dataset.event_participants
-          .filter((p) => p.event_id === eventId)
-          .map((p) => p.qr_code)
-      );
-
-      let participant =
-        dataset.event_participants.find(
-          (p) => p.event_id === eventId && p.user_id === currentUser.id
-        ) ?? null;
-
-      let checkInStamp =
-        (participant &&
-          dataset.stamps.find(
-            (s) =>
-              s.event_id === eventId &&
-              s.participant_id === participant?.id &&
-              s.stamp_type === 'checkin'
-          )) ??
-        null;
-
-      let isNewParticipant = false;
-      if (!participant) {
-        isNewParticipant = true;
-        const mintedQr = generateCryptographicQrCode(existingCodes);
-        participant = {
-          id: createUuid(),
-          event_id: eventId,
-          user_id: currentUser.id,
-          qr_code: mintedQr,
-          actual_spent_idr: 0,
-          leaderboard_idr: 0,
-          streak_expires_at: null,
-          created_at: nowIso,
-          updated_at: nowIso,
-        };
-      }
-
-      if (!checkInStamp) {
-        checkInStamp = {
-          id: createUuid(),
-          event_id: eventId,
-          participant_id: participant.id,
-          tenant_id: null,
-          stamp_type: 'checkin',
-          unlocked_at: nowIso,
-        };
-      }
-
-      let tenant =
-        dataset.tenants.find(
-          (t) => t.event_id === eventId && t.user_id === currentUser.id
-        ) ?? null;
-      let isNewTenant = false;
-
-      if (ticket.role_type === 'merchant' && !tenant) {
-        isNewTenant = true;
-        const cleanBoothNumber =
-          boothNumber?.trim().toUpperCase() ||
-          `E-${String(dataset.tenants.filter((t) => t.event_id === eventId).length + 1).padStart(2, '0')}`;
-        const cleanBoothName =
-          boothName?.trim() ||
-          currentUser.merchant_brand_name ||
-          `${currentUser.username}'s Booth`;
-
-        tenant = {
-          id: createUuid(),
-          event_id: eventId,
-          user_id: currentUser.id,
-          booth_number: cleanBoothNumber,
-          booth_name: cleanBoothName,
-          description:
-            currentUser.merchant_bio || 'Independent creator booth at the event.',
-          stamp_image_url: '',
-          event_sales_idr: 0,
-          unique_stamps_count: 0,
-          is_cold_bounty: false,
-          cold_bounty_expires_at: null,
-          cold_bounty_multiplier: targetEvent.cold_bounty_multiplier,
-          is_hidden_bounty: false,
-          hidden_bounty_bonus_idr: targetEvent.hidden_bounty_bonus_idr,
-          created_at: nowIso,
-          updated_at: nowIso,
-        };
-      }
-
-      const finalParticipant = participant;
-      const finalCheckInStamp = checkInStamp;
-      const finalTenant = tenant;
-
-      setDataset((prev) => {
-        const joinedEventIds = new Set([
-          ...prev.event_participants
-            .filter((p) => p.user_id === currentUser.id)
-            .map((p) => p.event_id),
-          ...prev.tenants
-            .filter((t) => t.user_id === currentUser.id)
-            .map((t) => t.event_id),
-          eventId,
-        ]);
-
-        return {
-          ...prev,
-          ticket_uids: prev.ticket_uids.map((t) =>
-            t.id === ticket.id
-              ? {
-                  ...t,
-                  claimed_by_user_id: currentUser.id,
-                  claimed_at: t.claimed_at ?? nowIso,
-                }
-              : t
-          ),
-          event_participants: isNewParticipant
-            ? [...prev.event_participants, finalParticipant]
-            : prev.event_participants,
-          stamps: prev.stamps.some((s) => s.id === finalCheckInStamp.id)
-            ? prev.stamps
-            : [...prev.stamps, finalCheckInStamp],
-          tenants:
-            isNewTenant && finalTenant
-              ? [...prev.tenants, finalTenant]
-              : prev.tenants,
-          users: prev.users.map((u) => {
-            if (u.id !== currentUser.id) return u;
-            const upgradingToMerchant = ticket.role_type === 'merchant';
-            return {
-              ...u,
-              is_merchant: u.is_merchant || upgradingToMerchant,
-              active_view_mode: upgradingToMerchant ? 'merchant' : u.active_view_mode,
-              merchant_brand_name:
-                upgradingToMerchant && boothName
-                  ? boothName.trim()
-                  : u.merchant_brand_name,
-              events_count: joinedEventIds.size,
-              updated_at: nowIso,
-            };
-          }),
-        };
-      });
 
       setActiveEventId(eventId);
       return {
-        event: targetEvent,
-        roleType: ticket.role_type,
-        participant: finalParticipant,
-        tenant: finalTenant,
-        checkInStamp: finalCheckInStamp,
-        isNewJoin: isNewParticipant || isNewTenant,
+        event: res.event,
+        roleType: res.role_type,
+        participant: res.participant,
+        tenant: res.tenant,
+        checkInStamp: res.check_in_stamp,
+        isNewJoin: res.is_new_join,
       };
     },
-    [currentUser, dataset, supabase, hydrateSupabaseData, setActiveEventId]
+    [currentUser, refreshDataset, setActiveEventId]
   );
 
   const becomeMerchant = useCallback(
@@ -899,83 +531,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         throw new Error('Brand / Booth name must be at least 2 characters.');
       }
       if (!normalizedCode) {
-        throw new Error('Please enter a valid Merchant Ticket UID.');
+        throw new Error('Please enter a valid Booth Event Ticket Code.');
       }
 
-      if (isDemoMode) {
-        const ticket = dataset.ticket_uids.find(
-          (t) => t.event_id === eventId && t.uid_code.toUpperCase() === normalizedCode
-        );
-        if (!ticket) {
-          throw new Error('Merchant Ticket UID not found for this event.');
-        }
-        if (ticket.role_type !== 'merchant') {
-          throw new Error(
-            'This Ticket UID is a Buyer ticket. Please enter a Merchant Ticket UID.'
-          );
-        }
-      }
-
-      const joinResult = await joinEventWithTicketUid({
+      const res = await apiClient.linkBooth(
         eventId,
-        uidCode: normalizedCode,
-        boothName: cleanBrand,
-        boothNumber,
-      });
+        {
+          uid_code: normalizedCode,
+          booth_name: cleanBrand,
+          booth_number: boothNumber,
+          bio: cleanBio,
+        },
+        currentUser.id
+      );
+      setIsFallbackMode(apiClient.isFallbackActive());
 
-      if (!joinResult.tenant) {
-        throw new Error('Merchant booth could not be provisioned for this ticket.');
+      if (apiClient.isFallbackActive()) {
+        setDataset(loadLocalDataset());
+      } else {
+        await refreshDataset();
       }
 
-      const nowIso = new Date().toISOString();
-
-      if (supabase) {
-        await supabase
-          .from('users')
-          .update({
-            is_merchant: true,
-            active_view_mode: 'merchant',
-            merchant_brand_name: cleanBrand,
-            merchant_bio: cleanBio,
-          })
-          .eq('id', currentUser.id);
-
-        await supabase
-          .from('tenants')
-          .update({
-            booth_name: cleanBrand,
-            description: cleanBio || joinResult.tenant.description,
-          })
-          .eq('id', joinResult.tenant.id);
-      }
-
-      const updatedUser: User = {
-        ...currentUser,
-        is_merchant: true,
-        active_view_mode: 'merchant',
-        merchant_brand_name: cleanBrand,
-        merchant_bio: cleanBio,
-        updated_at: nowIso,
-      };
-
-      const updatedTenant: Tenant = {
-        ...joinResult.tenant,
-        booth_name: cleanBrand,
-        description: cleanBio || joinResult.tenant.description,
-        updated_at: nowIso,
-      };
-
-      setDataset((prev) => ({
-        ...prev,
-        users: prev.users.map((u) => (u.id === currentUser.id ? updatedUser : u)),
-        tenants: prev.tenants.map((t) =>
-          t.id === updatedTenant.id ? updatedTenant : t
-        ),
-      }));
-
-      return { user: updatedUser, tenant: updatedTenant };
+      setActiveEventId(eventId);
+      return { user: res.user, tenant: res.tenant };
     },
-    [currentUser, dataset.ticket_uids, isDemoMode, joinEventWithTicketUid, supabase]
+    [currentUser, refreshDataset, setActiveEventId]
   );
 
   const getParticipantForEvent = useCallback(
@@ -1007,17 +587,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [syncTransactionHandler]);
 
   const resetDemoState = useCallback(() => {
-    const fresh = cloneSeedDataset();
+    apiClient.resetLocalState();
+    const fresh = loadLocalDataset();
     setDataset(fresh);
     if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(DEMO_STORE_KEY);
-      window.localStorage.removeItem(DEMO_SESSION_USER_ID_KEY);
       window.localStorage.removeItem(ACTIVE_EVENT_ID_KEY);
     }
-    persistDemoSessionUser(null);
+    persistSessionUser(null);
     setActiveEventId(null);
     void offlineQueue.clearQueue();
-  }, [persistDemoSessionUser, setActiveEventId]);
+  }, [persistSessionUser, setActiveEventId]);
 
   const value = useMemo<AppContextValue>(
     () => ({
@@ -1042,6 +621,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       joinEventWithTicketUid,
       getParticipantForEvent,
       getTenantForEvent,
+      updateDataset,
+      refreshDataset,
       triggerManualSync,
       resetDemoState,
     }),
@@ -1067,6 +648,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       joinEventWithTicketUid,
       getParticipantForEvent,
       getTenantForEvent,
+      updateDataset,
+      refreshDataset,
       triggerManualSync,
       resetDemoState,
     ]

@@ -37,12 +37,7 @@ function shouldBypassCache(url) {
     return true;
   }
   const path = url.pathname;
-  return (
-    path.startsWith('/rest/v1/') ||
-    path.startsWith('/auth/v1/') ||
-    path.startsWith('/realtime/') ||
-    path.startsWith('/storage/v1/')
-  );
+  return path.startsWith('/api/');
 }
 
 self.addEventListener('fetch', (event) => {

@@ -52,8 +52,8 @@ const BUYER_TROPHY_BADGES: BadgeDefinition[] = [
   },
   {
     id: 'Patron Whale',
-    title: 'Patron Whale',
-    description: 'Spent Rp 1.000.000+ in real IDR supporting event creators.',
+    title: 'Event Patron',
+    description: 'Spent Rp 1.000.000+ supporting creators at convention booths.',
     icon: Crown,
     accentClass: 'from-indigo-500/25 to-violet-500/10 border-indigo-400/50 text-indigo-300',
   },
@@ -222,24 +222,24 @@ export const GlobalProfilePage: React.FC = () => {
                 <h1 className="text-2xl font-bold text-white">
                   {currentUser.username}
                 </h1>
-                <span className="rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-300">
-                  Buyer
+                <span className="text-xs font-medium text-indigo-300">
+                  &middot; Attendee
                 </span>
                 {currentUser.is_merchant && (
-                  <span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-300">
-                    Merchant
+                  <span className="text-xs font-medium text-emerald-300">
+                    &middot; Booth Creator
                   </span>
                 )}
                 {currentUser.is_admin && (
-                  <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-300">
-                    Organizer Admin
+                  <span className="text-xs font-medium text-amber-300">
+                    &middot; Organizer
                   </span>
                 )}
               </div>
               <p className="mt-0.5 text-sm text-slate-400">{currentUser.email}</p>
               {currentUser.merchant_brand_name && (
                 <p className="mt-1 text-xs font-medium text-emerald-300">
-                  Merchant Brand: {currentUser.merchant_brand_name}
+                  Booth Brand: {currentUser.merchant_brand_name}
                 </p>
               )}
             </div>
@@ -250,10 +250,10 @@ export const GlobalProfilePage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setMerchantModalOpen(true)}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
+                className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
               >
                 <Store className="h-4 w-4" />
-                Become a Merchant
+                Unlock a Booth
               </button>
             )}
             <Link
@@ -272,36 +272,36 @@ export const GlobalProfilePage: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <ShoppingBag className="h-5 w-5 text-indigo-400" />
-            <h2 className="text-lg font-bold text-white">Lifetime Buyer Stats</h2>
+            <h2 className="text-lg font-bold text-white">Lifetime Attendee Stats</h2>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-medium text-slate-300">
-            <Lock className="h-3 w-3 text-emerald-400" />
-            Private actual_spent_idr (visible only to you)
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300">
+            <Lock className="h-3.5 w-3.5 text-emerald-400" />
+            Personal Spend Summary &middot; Private
           </span>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              All-Time Actual Money Spent
+            <p className="text-xs font-semibold text-slate-400">
+              Total Spent (Private)
             </p>
-            <p className="mt-2 text-2xl font-extrabold text-white">
+            <p className="mt-2 font-mono text-2xl font-extrabold text-white tabular-nums">
               {formatIdr(profileStats.lifetimeActualSpentIdr)}
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              Exact unmultiplied IDR across all attended events
+              Personal Spend Summary &middot; Private across all events
             </p>
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Total Events Attended
+            <p className="text-xs font-semibold text-slate-400">
+              Events Attended
             </p>
-            <p className="mt-2 text-2xl font-extrabold text-indigo-300">
+            <p className="mt-2 font-mono text-2xl font-extrabold text-indigo-300 tabular-nums">
               {profileStats.eventsAttendedCount}
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              Verified via Ticket UID enrollment
+              Verified via Event Ticket Code check-in
             </p>
           </div>
 
@@ -460,7 +460,7 @@ export const GlobalProfilePage: React.FC = () => {
               You haven&apos;t joined any events yet.
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              Head to the Event Directory and enter a Ticket UID (e.g.{' '}
+              Head to Events and enter an Event Ticket Code (e.g.{' '}
               <code className="text-indigo-300">TKT-DEMO-BYR</code>) to unlock Stamp #1!
             </p>
             <Link
@@ -514,14 +514,14 @@ export const GlobalProfilePage: React.FC = () => {
                     {participant && (
                       <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs">
                         <div>
-                          <span className="text-slate-400">Actual Spend</span>
-                          <p className="font-bold text-white">
+                          <span className="text-slate-400">Total Spent</span>
+                          <p className="font-mono font-bold text-white tabular-nums">
                             {formatIdr(participant.actual_spent_idr)}
                           </p>
                         </div>
                         <div>
-                          <span className="text-slate-400">Leaderboard</span>
-                          <p className="font-bold text-amber-300">
+                          <span className="text-slate-400">Leaderboard Score</span>
+                          <p className="font-mono font-bold text-amber-300 tabular-nums">
                             {formatIdr(participant.leaderboard_idr)}
                           </p>
                         </div>

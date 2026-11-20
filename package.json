@@ -9,7 +9,6 @@
     "preview": "vite preview --host 0.0.0.0 --port 3000"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.46.1",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.460.0",
     "qrcode.react": "^4.1.0",

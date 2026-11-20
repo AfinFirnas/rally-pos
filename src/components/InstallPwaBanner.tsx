@@ -181,7 +181,7 @@ export const InstallPwaBanner: React.FC = () => {
               </p>
             ) : (
               <p className="text-slate-300">
-                Works on desktop &amp; mobile with offline IndexedDB sync and instant camera access.
+                Save your Event Pass to your home screen for quick QR scanning even in low-signal halls.
               </p>
             )}
           </div>

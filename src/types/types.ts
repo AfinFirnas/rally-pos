@@ -1,5 +1,5 @@
 // ============================================================================
-// CORE DOMAIN TYPES & DATABASE TABLE INTERFACES (MATCHING supabase/schema.sql)
+// CORE DOMAIN TYPES & API DATA INTERFACES
 // ============================================================================
 
 export type ViewMode = 'buyer' | 'merchant';

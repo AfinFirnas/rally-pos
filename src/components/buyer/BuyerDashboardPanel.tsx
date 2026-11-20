@@ -67,7 +67,6 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
   const [enlargedQrOpen, setEnlargedQrOpen] = useState(false);
   const [selectedBooth, setSelectedBooth] = useState<Tenant | null>(null);
 
-  // Live 1-second timer for 60-min streak & 30-min Cold-Booth countdowns
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
@@ -115,7 +114,6 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
       .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   }, [dataset.transactions, event.id, participant]);
 
-  // Event-scoped Leaderboard Rank & exact gap to overtake the buyer directly ahead
   const standing = useMemo(() => {
     const entries: LeaderboardEntry[] = dataset.event_participants
       .filter((p) => p.event_id === event.id)
@@ -135,7 +133,6 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
     return computeLeaderboardStanding(entries, participant?.id);
   }, [dataset.event_participants, dataset.stamps, event.id, participant?.id, userNameMap]);
 
-  // 60-Minute Streak State & Progress
   const streakInfo = useMemo(() => {
     if (!participant) {
       return {
@@ -152,7 +149,6 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
     const remainingMs = Math.max(0, expiresMs - nowMs);
     const isActive = remainingMs > 0;
 
-    // Count distinct booths purchased in the last 60m from completed transactions
     const windowStartMs = nowMs - 60 * 60_000;
     const distinctRecentBooths = new Set<string>();
     for (const tx of participantTxs) {
@@ -163,7 +159,6 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
       }
     }
 
-    // Also inspect via engine using last booth if any
     if (isActive) {
       evaluateSixtyMinuteStreak({
         currentTenantId: participantTxs[0]?.tenant_id ?? '',
@@ -218,9 +213,10 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
     return (
       <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-center">
         <QrCode className="mx-auto h-10 w-10 text-slate-500" />
-        <h2 className="mt-3 text-lg font-bold text-white">Buyer Rally Profile Inactive</h2>
+        <h2 className="mt-3 text-lg font-bold text-white">Event Pass Inactive</h2>
         <p className="mt-1 text-xs text-slate-400">
-          Join this event with a Ticket UID to receive your cryptographic QR pass and Stamp #1.
+          Complete Event Check-In with your Event Ticket Code to receive your Attendee Checkout QR
+          and Stamp #1.
         </p>
       </div>
     );
@@ -233,256 +229,252 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
   );
 
   return (
-    <div className="space-y-6">
-      {/* Top Row: Event-Scoped Dual-IDR KPIs + Scannable Cryptographic QR Pass */}
-      <div className="grid gap-6 lg:grid-cols-12">
-        {/* Left 8 Cols: 4 Dual-IDR Event KPIs & 60-Min Streak Bar */}
-        <div className="space-y-4 lg:col-span-8">
-          <div className="grid gap-4 sm:grid-cols-2">
-            {/* Private Actual Money Spent */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/85 p-5 shadow-lg">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold uppercase tracking-wider text-slate-400">
-                  Private Actual Spent
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
-                  <Lock className="h-3 w-3" />
-                  Only You
-                </span>
-              </div>
-              <p className="mt-2 text-2xl font-extrabold text-white sm:text-3xl">
-                {formatIdr(participant.actual_spent_idr)}
-              </p>
-              <p className="mt-1 text-xs text-slate-400">
-                Exact real IDR spent in <strong>{event.name}</strong>
-              </p>
-            </div>
-
-            {/* Public Boosted Leaderboard Spend */}
-            <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-slate-900 to-amber-950/25 p-5 shadow-lg">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold uppercase tracking-wider text-amber-300">
-                  Public Leaderboard Spend
-                </span>
-                <TrendingUp className="h-4 w-4 text-amber-400" />
-              </div>
-              <p className="mt-2 text-2xl font-extrabold text-amber-300 sm:text-3xl">
-                {formatIdr(participant.leaderboard_idr)}
-              </p>
-              <p className="mt-1 text-xs text-slate-300">
-                {boostDeltaIdr > 0 ? (
-                  <>
-                    Includes <strong className="text-emerald-300">+{formatIdr(boostDeltaIdr)}</strong>{' '}
-                    from multipliers &amp; bounties
-                  </>
-                ) : (
-                  'Shown publicly on the Top 10 Leaderboard'
-                )}
-              </p>
-            </div>
-
-            {/* Current Event Rank & Gap to Overtake */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/85 p-5 shadow-lg">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold uppercase tracking-wider text-slate-400">
-                  Current Event Rank
-                </span>
-                <Trophy className="h-4 w-4 text-indigo-400" />
-              </div>
-              <p className="mt-2 text-2xl font-extrabold text-indigo-300">
-                #{standing.targetEntry?.rank_position ?? '-'}
-                <span className="ml-2 text-xs font-medium text-slate-400">
-                  of {standing.ranked.length} attendees
-                </span>
-              </p>
-              <p className="mt-1 text-xs text-slate-300">
-                {standing.leaderAhead ? (
-                  <>
-                    Spend{' '}
-                    <strong className="text-amber-300">
-                      {formatIdr(standing.gapToOvertakeIdr)}
-                    </strong>{' '}
-                    Leaderboard IDR to pass <strong>{standing.leaderAhead.username}</strong> (#
-                    {standing.leaderAhead.rank_position})
-                  </>
-                ) : (
-                  <span className="font-semibold text-amber-300">
-                    You hold Rank #1 in {event.name}!
-                  </span>
-                )}
-              </p>
-            </div>
-
-            {/* Stamps Collected (X/N) */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/85 p-5 shadow-lg">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold uppercase tracking-wider text-slate-400">
-                  Stamps Collected
-                </span>
-                <Award className="h-4 w-4 text-emerald-400" />
-              </div>
-              <p className="mt-2 text-2xl font-extrabold text-emerald-300">
-                {participantStamps.length} / {totalStampSlots}
-              </p>
-              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-800">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-500"
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      Math.round((participantStamps.length / Math.max(1, totalStampSlots)) * 100)
-                    )}%`,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 60-Minute Streak Multiplier Countdown Bar */}
-          <div
-            className={`rounded-2xl border p-4 shadow-lg transition ${
-              streakInfo.isActive
-                ? 'border-orange-400/50 bg-gradient-to-r from-orange-950/60 via-slate-900 to-amber-950/50'
-                : 'border-slate-800 bg-slate-900/80'
-            }`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <div
-                  className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                    streakInfo.isActive
-                      ? 'bg-orange-500/25 text-orange-300'
-                      : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  <Flame className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-white">
-                    {streakInfo.isActive
-                      ? '1.25x Speedrunner Streak ACTIVE!'
-                      : '60-Minute Streak Multiplier (1.25x)'}
-                  </p>
-                  <p className="text-xs text-slate-300">
-                    {streakInfo.isActive
-                      ? 'Every purchase now earns 1.25x Leaderboard IDR (stacks with Gold Cold-Booth bounties).'
-                      : `Visit 3 distinct booths within 60 minutes (${Math.min(3, streakInfo.distinctLast60m)}/3 in current window).`}
-                  </p>
-                </div>
-              </div>
-
-              {streakInfo.isActive ? (
-                <div className="flex items-center gap-1.5 rounded-xl border border-orange-400/40 bg-slate-950/80 px-3 py-1.5 font-mono text-sm font-extrabold text-orange-300">
-                  <Clock className="h-4 w-4" />
-                  <span>{formatCountdownMmSs(streakInfo.remainingMs)}</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  {[1, 2, 3].map((step) => (
-                    <span
-                      key={step}
-                      className={`flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold ${
-                        streakInfo.distinctLast60m >= step
-                          ? 'bg-orange-500 text-slate-950'
-                          : 'border border-slate-700 bg-slate-950 text-slate-500'
-                      }`}
-                    >
-                      {step}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {streakInfo.isActive && (
-              <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-950/80">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300 transition-all duration-1000"
-                  style={{ width: `${streakInfo.progressPct}%` }}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right 4 Cols: Scannable Cryptographic QR Pass */}
-        <div className="flex flex-col items-center justify-between rounded-2xl border border-indigo-500/35 bg-gradient-to-b from-indigo-950/50 via-slate-900 to-slate-900 p-6 text-center shadow-xl lg:col-span-4">
-          <div className="w-full">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-indigo-300">
-              <QrCode className="h-3.5 w-3.5" />
-              Booth Checkout Pass
-            </span>
-            <p className="mt-2 text-xs text-slate-300">
-              Show this code to merchants to record IDR &amp; unlock 1:1 stamps.
-            </p>
-          </div>
-
+    <div className="space-y-5">
+      {/* ABOVE THE FOLD: Compact Horizontal Attendee Checkout QR Card */}
+      <section className="rounded-2xl border border-indigo-500/40 bg-gradient-to-r from-indigo-950/75 via-slate-900 to-slate-900 p-3.5 sm:p-5 shadow-xl">
+        <div className="flex items-center gap-3.5 sm:gap-5">
+          {/* Left: Tap-to-Enlarge QR Thumbnail */}
           <button
             type="button"
             onClick={() => setEnlargedQrOpen(true)}
-            className="group relative my-4 rounded-2xl bg-white p-4 shadow-xl transition hover:scale-[1.02]"
-            title="Tap to enlarge QR code"
+            className="group relative shrink-0 rounded-xl bg-white p-2 shadow-lg transition active:scale-[0.98]"
+            aria-label="Enlarge Attendee Checkout QR"
           >
             <QRCodeSVG
               value={participant.qr_code}
-              size={156}
+              size={84}
               level="M"
               bgColor="#ffffff"
               fgColor="#0f172a"
             />
-            <span className="mt-2 flex items-center justify-center gap-1 text-[11px] font-semibold text-slate-500 group-hover:text-indigo-600">
-              <Maximize2 className="h-3 w-3" />
-              Tap to enlarge
+            <span className="mt-1 flex items-center justify-center gap-1 text-[10px] font-bold text-slate-600 group-hover:text-indigo-600">
+              <Maximize2 className="h-2.5 w-2.5" />
+              Enlarge
             </span>
           </button>
 
-          <div className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950/90 px-3.5 py-2.5">
-            <span className="font-mono text-lg font-extrabold tracking-widest text-indigo-300">
+          {/* Right: Pass ID + 1-Tap Copy + Enlarge CTA */}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+              <span className="font-semibold text-indigo-300">Attendee Checkout QR</span>
+              <span className="hidden sm:inline text-slate-500" aria-hidden="true">
+                &middot;
+              </span>
+              <span className="hidden sm:inline text-slate-400">Show at booths</span>
+            </div>
+
+            <p className="mt-1 text-[11px] font-medium text-slate-400">Your Event Pass ID</p>
+            <p className="truncate font-mono text-xl font-extrabold tracking-widest text-white sm:text-2xl tabular-nums">
               {participant.qr_code}
-            </span>
-            <button
-              type="button"
-              onClick={() => void handleCopyQr()}
-              className="inline-flex items-center gap-1 rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-            >
-              {copiedQr ? (
-                <>
-                  <Check className="h-3.5 w-3.5 text-emerald-400" />
-                  Copied
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy
-                </>
-              )}
-            </button>
+            </p>
+
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCopyQr()}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950/90 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-indigo-400 hover:bg-slate-800"
+              >
+                {copiedQr ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-emerald-300">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5 text-indigo-300" />
+                    <span>Copy ID</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEnlargedQrOpen(true)}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-indigo-500"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                <span>Full Brightness QR</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Interactive 1:1 Stamp Album & Floor Directory */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-bold text-white">
-              <Sparkles className="h-5 w-5 text-emerald-400" />
-              Interactive 1:1 Stamp Album &amp; Floor Directory
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Spend at least <strong className="text-emerald-300">{formatIdr(event.min_stamp_spend_idr)}</strong>{' '}
-              at a booth to stamp its custom 1:1 mascot badge. Gold frames grant a live boost!
+      {/* Personal Spend Summary · Private & Core Metrics (Above the Fold on Mobile) */}
+      <section className="space-y-2.5">
+        <div className="flex items-center justify-between gap-2 px-0.5 text-xs text-slate-400">
+          <span className="inline-flex items-center gap-1.5 font-medium text-slate-300">
+            <Lock className="h-3.5 w-3.5 text-emerald-400" />
+            Personal Spend Summary &middot; Private
+          </span>
+          <span className="hidden sm:inline text-slate-400">
+            Live standings &amp; stamp progress
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {/* Total Spent (Private) */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-400">
+              <span>Total Spent (Private)</span>
+              <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            </div>
+            <p className="mt-1.5 truncate font-mono text-lg font-extrabold text-white sm:text-xl tabular-nums">
+              {formatIdr(participant.actual_spent_idr)}
+            </p>
+            <p className="mt-1 text-[11px] text-slate-400 truncate">Only visible to you</p>
+          </div>
+
+          {/* Leaderboard Score (IDR) */}
+          <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-slate-900 to-amber-950/20 p-3.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-amber-300">
+              <span className="truncate">Leaderboard Score (IDR)</span>
+              <TrendingUp className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+            </div>
+            <p className="mt-1.5 truncate font-mono text-lg font-extrabold text-amber-300 sm:text-xl tabular-nums">
+              {formatIdr(participant.leaderboard_idr)}
+            </p>
+            <p className="mt-1 truncate text-[11px] text-slate-300 tabular-nums">
+              {boostDeltaIdr > 0
+                ? `+${formatIdr(boostDeltaIdr)} boost bonus`
+                : 'Public rally ranking'}
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-1.5 rounded-xl border border-slate-800 bg-slate-950 p-1 text-xs">
+          {/* Event Rank */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-400">
+              <span>Event Rank</span>
+              <Trophy className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-indigo-300 sm:text-xl tabular-nums">
+              #{standing.targetEntry?.rank_position ?? '-'}
+              <span className="ml-1.5 font-sans text-[11px] font-medium text-slate-400">
+                / {standing.ranked.length}
+              </span>
+            </p>
+            <p className="mt-1 truncate text-[11px] text-slate-300 tabular-nums">
+              {standing.leaderAhead
+                ? `${formatIdr(standing.gapToOvertakeIdr)} to pass #${standing.leaderAhead.rank_position}`
+                : 'Leading the rally'}
+            </p>
+          </div>
+
+          {/* Stamps Collected */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-400">
+              <span>Booth Stamps</span>
+              <Award className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-emerald-300 sm:text-xl tabular-nums">
+              {participantStamps.length} / {totalStampSlots}
+            </p>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-500"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.round((participantStamps.length / Math.max(1, totalStampSlots)) * 100)
+                  )}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 60-Minute Streak Multiplier Bar */}
+      <div
+        className={`rounded-2xl border p-4 transition ${
+          streakInfo.isActive
+            ? 'border-orange-400/50 bg-gradient-to-r from-orange-950/55 via-slate-900 to-amber-950/45'
+            : 'border-slate-800 bg-slate-900/80'
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                streakInfo.isActive
+                  ? 'bg-orange-500/25 text-orange-300'
+                  : 'bg-slate-800 text-slate-400'
+              }`}
+            >
+              <Flame className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-white">
+                {streakInfo.isActive
+                  ? '1.25x Speedrunner Streak Active'
+                  : '60-Minute Streak Bonus (1.25x)'}
+              </p>
+              <p className="text-xs text-slate-300">
+                {streakInfo.isActive
+                  ? 'Purchases earn 1.25x Leaderboard Score (stacks with Gold Boosts).'
+                  : `Shop at 3 distinct booths within 60 min (${Math.min(3, streakInfo.distinctLast60m)}/3 so far).`}
+              </p>
+            </div>
+          </div>
+
+          {streakInfo.isActive ? (
+            <div className="flex items-center gap-1.5 rounded-xl border border-orange-400/40 bg-slate-950/80 px-3 py-1.5 font-mono text-sm font-extrabold text-orange-300 tabular-nums">
+              <Clock className="h-4 w-4" />
+              <span>{formatCountdownMmSs(streakInfo.remainingMs)}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              {[1, 2, 3].map((step) => (
+                <span
+                  key={step}
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold tabular-nums ${
+                    streakInfo.distinctLast60m >= step
+                      ? 'bg-orange-500 text-slate-950'
+                      : 'border border-slate-700 bg-slate-950 text-slate-500'
+                  }`}
+                >
+                  {step}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {streakInfo.isActive && (
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-950/80">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300 transition-all duration-1000"
+              style={{ width: `${streakInfo.progressPct}%` }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 2-Column 1:1 Stamp Passport Grid & Floor Directory */}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 sm:p-6 shadow-xl">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-bold text-white sm:text-lg">
+              <Sparkles className="h-4 w-4 text-emerald-400" />
+              Stamp Passport &amp; Booths
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Spend{' '}
+              <strong className="text-emerald-300 tabular-nums">
+                {formatIdr(event.min_stamp_spend_idr)}
+              </strong>{' '}
+              at a booth to stamp its 1:1 badge. Tap any booth to preview its menu.
+            </p>
+          </div>
+
+          <div className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950 p-1 text-xs">
             {(
               [
                 { id: 'all', label: `All (${eventBooths.length})` },
-                { id: 'unlocked', label: `Unlocked (${stampedBoothIds.size})` },
+                { id: 'unlocked', label: `Stamped (${stampedBoothIds.size})` },
                 {
                   id: 'remaining',
-                  label: `Remaining (${Math.max(0, eventBooths.length - stampedBoothIds.size)})`,
+                  label: `Left (${Math.max(0, eventBooths.length - stampedBoothIds.size)})`,
                 },
                 { id: 'bounty', label: 'Gold Boost' },
               ] as const
@@ -491,7 +483,7 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
                 key={f.id}
                 type="button"
                 onClick={() => setAlbumFilter(f.id)}
-                className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                className={`min-h-[34px] shrink-0 rounded-lg px-2.5 py-1 font-semibold transition whitespace-nowrap ${
                   albumFilter === f.id
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-400 hover:text-white'
@@ -503,34 +495,37 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {/* Stamp #1: Pre-Unlocked Event Check-In */}
+        {/* 2-Column Square Stamp Grid on Mobile */}
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {/* Stamp #1: Event Check-In */}
           {albumFilter === 'all' || albumFilter === 'unlocked' ? (
-            <div className="flex flex-col items-center justify-between rounded-2xl border-2 border-indigo-400/70 bg-gradient-to-b from-indigo-950/60 to-slate-950 p-4 text-center shadow-lg">
-              <div className="flex w-full items-center justify-between text-[10px] font-bold uppercase tracking-wider text-indigo-300">
-                <span>Stamp #1</span>
+            <div className="flex flex-col items-center justify-between rounded-2xl border border-indigo-400/60 bg-gradient-to-b from-indigo-950/60 to-slate-950 p-3 text-center">
+              <div className="flex w-full items-center justify-between text-[11px] font-semibold">
+                <span className="font-mono text-indigo-300">#01</span>
                 <span className="inline-flex items-center gap-0.5 text-emerald-300">
                   <CheckCircle2 className="h-3 w-3" />
                   Checked In
                 </span>
               </div>
-              <div className="my-3 flex aspect-square w-24 items-center justify-center rounded-2xl border-2 border-dashed border-indigo-400/60 bg-indigo-500/20 text-indigo-200">
+              <div className="my-2.5 flex aspect-square w-full max-w-[96px] items-center justify-center rounded-2xl border-2 border-dashed border-indigo-400/60 bg-indigo-500/20 text-indigo-200">
                 <div className="text-center">
-                  <CheckCircle2 className="mx-auto h-9 w-9 text-emerald-400" />
-                  <span className="mt-1 block text-[10px] font-extrabold uppercase">
+                  <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-400" />
+                  <span className="mt-1 block text-[10px] font-extrabold uppercase tracking-wide">
                     Check-In
                   </span>
                 </div>
               </div>
-              <div>
-                <p className="text-sm font-bold text-white">Event Check-In</p>
-                <p className="mt-0.5 text-[11px] text-slate-400">
+              <div className="w-full">
+                <p className="truncate text-xs font-bold text-white sm:text-sm">
+                  Event Check-In
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400 tabular-nums">
                   {checkInStamp
-                    ? `Unlocked ${new Date(checkInStamp.unlocked_at).toLocaleTimeString('id-ID', {
+                    ? new Date(checkInStamp.unlocked_at).toLocaleTimeString('id-ID', {
                         hour: '2-digit',
                         minute: '2-digit',
-                      })}`
-                    : 'Ticket Verified'}
+                      })
+                    : 'Pass Active'}
                 </p>
               </div>
             </div>
@@ -555,22 +550,20 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
                 key={booth.id}
                 type="button"
                 onClick={() => setSelectedBooth(booth)}
-                className={`group flex flex-col items-center justify-between rounded-2xl border-2 p-4 text-center transition hover:-translate-y-0.5 ${
+                className={`group flex flex-col items-center justify-between rounded-2xl border p-3 text-center transition active:scale-[0.98] ${
                   isColdBoosted
-                    ? 'border-amber-400 bg-gradient-to-b from-amber-950/45 via-slate-900 to-slate-950 shadow-[0_0_24px_rgba(251,191,36,0.22)]'
+                    ? 'border-amber-400/80 bg-gradient-to-b from-amber-950/40 via-slate-900 to-slate-950 shadow-[0_0_20px_rgba(251,191,36,0.16)]'
                     : unlocked
-                      ? 'border-emerald-500/60 bg-gradient-to-b from-emerald-950/30 to-slate-950'
-                      : 'border-slate-800 bg-slate-950/60 hover:border-slate-700'
+                      ? 'border-emerald-500/60 bg-gradient-to-b from-emerald-950/25 to-slate-950'
+                      : 'border-slate-800 bg-slate-950/70 hover:border-slate-700'
                 }`}
               >
-                <div className="flex w-full items-center justify-between gap-1 text-[10px] font-bold uppercase tracking-wider">
-                  <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-200">
-                    {booth.booth_number}
-                  </span>
+                <div className="flex w-full items-center justify-between gap-1 text-[11px] font-semibold">
+                  <span className="font-mono text-slate-300">{booth.booth_number}</span>
                   {isColdBoosted ? (
-                    <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-400/20 px-2 py-0.5 text-amber-300">
+                    <span className="inline-flex items-center gap-0.5 text-amber-300">
                       <Zap className="h-3 w-3" />
-                      {booth.cold_bounty_multiplier}x Boost
+                      {booth.cold_bounty_multiplier}x
                     </span>
                   ) : unlocked ? (
                     <span className="inline-flex items-center gap-0.5 text-emerald-300">
@@ -584,12 +577,12 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
 
                 {/* 1:1 Stamp Artwork */}
                 <div
-                  className={`relative my-3 aspect-square w-24 overflow-hidden rounded-2xl border-2 transition ${
+                  className={`relative my-2.5 aspect-square w-full max-w-[96px] overflow-hidden rounded-2xl border-2 transition ${
                     isColdBoosted
                       ? 'border-amber-400'
                       : unlocked
                         ? 'border-emerald-400/70'
-                        : 'border-slate-800 grayscale opacity-45 group-hover:opacity-70'
+                        : 'border-slate-800 grayscale opacity-45 group-hover:opacity-75'
                   }`}
                 >
                   <img
@@ -605,17 +598,17 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
                 </div>
 
                 <div className="w-full">
-                  <p className="line-clamp-1 text-sm font-bold text-white">
+                  <p className="truncate text-xs font-bold text-white sm:text-sm">
                     {booth.booth_name}
                   </p>
                   {isColdBoosted && coldRemainingMs !== null ? (
-                    <p className="mt-0.5 font-mono text-[11px] font-semibold text-amber-300">
-                      Boost ends in {formatCountdownMmSs(coldRemainingMs)}
+                    <p className="mt-0.5 truncate font-mono text-[11px] font-semibold text-amber-300 tabular-nums">
+                      {formatCountdownMmSs(coldRemainingMs)} left
                     </p>
                   ) : (
-                    <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-400">
+                    <p className="mt-0.5 truncate text-[11px] text-slate-400 tabular-nums">
                       {unlocked
-                        ? 'Collected in album'
+                        ? 'In passport'
                         : `Min ${formatIdr(event.min_stamp_spend_idr)}`}
                     </p>
                   )}
@@ -626,21 +619,21 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
         </div>
       </section>
 
-      {/* Private Event Purchase History */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
-        <div className="flex items-center justify-between gap-2">
+      {/* Personal Purchase History */}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-base font-bold text-white">
-            Your Private Purchase History ({participantTxs.length})
+            Your Purchase History ({participantTxs.length})
           </h3>
           <span className="text-xs text-slate-400">
-            Shows exact actual_spent_idr vs boosted leaderboard_idr
+            Personal Spend Summary &middot; Private
           </span>
         </div>
 
         {participantTxs.length === 0 ? (
-          <p className="mt-4 text-xs text-slate-400">
-            No booth purchases recorded yet. Show your QR pass at any booth to start collecting
-            stamps!
+          <p className="mt-3 text-xs text-slate-400">
+            No booth purchases recorded yet. Show your Attendee Checkout QR at any booth to start
+            collecting stamps.
           </p>
         ) : (
           <div className="mt-4 space-y-2">
@@ -650,14 +643,14 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
               return (
                 <div
                   key={tx.id}
-                  className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-2.5 text-xs ${
+                  className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 text-xs ${
                     isVoided
                       ? 'border-slate-800/60 bg-slate-950/30 opacity-55'
                       : 'border-slate-800 bg-slate-950/70'
                   }`}
                 >
-                  <div>
-                    <div className="flex items-center gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono font-bold text-indigo-300">
                         {booth?.booth_number ?? 'BOOTH'}
                       </span>
@@ -665,33 +658,33 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
                         {booth?.booth_name ?? 'Creator Booth'}
                       </span>
                       {tx.multiplier_applied > 1 && !isVoided && (
-                        <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
-                          {tx.multiplier_applied}x Boost
+                        <span className="text-[11px] font-bold text-amber-300">
+                          &middot; {tx.multiplier_applied}x Boost
                         </span>
                       )}
                       {tx.hit_hidden_bounty && !isVoided && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-bold text-violet-300">
+                        <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-violet-300">
                           <Gift className="h-3 w-3" />
-                          Hidden Bounty
+                          Secret Bonus
                         </span>
                       )}
                       {isVoided && (
-                        <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
-                          VOIDED
+                        <span className="text-[11px] font-bold text-rose-300">
+                          &middot; Voided
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 text-[11px] text-slate-400">
+                    <p className="mt-0.5 text-[11px] text-slate-400 tabular-nums">
                       {new Date(tx.created_at).toLocaleString('id-ID')}
                     </p>
                   </div>
 
-                  <div className="text-right font-mono">
+                  <div className="text-right font-mono tabular-nums">
                     <p className="font-bold text-white">
-                      Actual: {formatIdr(tx.actual_amount_idr)}
+                      Paid: {formatIdr(tx.actual_amount_idr)}
                     </p>
                     <p className="text-[11px] text-amber-300">
-                      Leaderboard: {formatIdr(tx.leaderboard_amount_idr)}
+                      Score: {formatIdr(tx.leaderboard_amount_idr)}
                     </p>
                   </div>
                 </div>
@@ -701,46 +694,66 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
         )}
       </section>
 
-      {/* Enlarged Fullscreen QR Pass Modal */}
+      {/* Enlarged Full-Brightness Attendee Checkout QR Modal */}
       {enlargedQrOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95 p-4 backdrop-blur-sm"
           onClick={() => setEnlargedQrOpen(false)}
           role="dialog"
           aria-modal="true"
+          aria-label="Full brightness Attendee Checkout QR"
         >
           <div
-            className="w-full max-w-sm rounded-3xl border border-indigo-500/40 bg-slate-900 p-6 text-center shadow-2xl"
+            className="w-full max-w-sm rounded-3xl border border-slate-200/20 bg-white p-6 text-center text-slate-950 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-indigo-300">
-                {event.name} QR Pass
-              </span>
+              <div className="text-left">
+                <p className="text-xs font-bold text-indigo-600">Attendee Checkout QR</p>
+                <p className="text-xs font-medium text-slate-500">{event.name}</p>
+              </div>
               <button
                 type="button"
                 onClick={() => setEnlargedQrOpen(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Close enlarged QR"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="mx-auto my-5 inline-block rounded-2xl bg-white p-5">
+
+            <div className="mx-auto my-4 inline-block rounded-2xl border border-slate-200 bg-white p-4">
               <QRCodeSVG
                 value={participant.qr_code}
-                size={240}
+                size={236}
                 level="M"
                 bgColor="#ffffff"
-                fgColor="#0f172a"
+                fgColor="#020617"
               />
             </div>
-            <p className="font-mono text-2xl font-extrabold tracking-widest text-white">
+
+            <p className="text-xs font-medium text-slate-500">Your Event Pass ID</p>
+            <p className="mt-0.5 font-mono text-2xl font-extrabold tracking-widest text-slate-950 tabular-nums">
               {participant.qr_code}
             </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Increase screen brightness if scanner struggles at booth counter.
-            </p>
+
+            <button
+              type="button"
+              onClick={() => void handleCopyQr()}
+              className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800"
+            >
+              {copiedQr ? (
+                <>
+                  <Check className="h-4 w-4 text-emerald-400" />
+                  <span>Copied Pass ID</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4" />
+                  <span>Copy Event Pass ID</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}
@@ -748,13 +761,13 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
       {/* Booth Directory & Merch Catalog Modal */}
       {selectedBooth && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/85 p-0 backdrop-blur-sm sm:items-center sm:p-4"
           onClick={() => setSelectedBooth(null)}
           role="dialog"
           aria-modal="true"
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl"
+            className="w-full max-w-md rounded-t-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl sm:rounded-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
@@ -782,35 +795,35 @@ export const BuyerDashboardPanel: React.FC<BuyerDashboardPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedBooth(null)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white"
                 aria-label="Close booth details"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <p className="mt-3 text-xs text-slate-300">
+            <p className="mt-3 text-xs leading-relaxed text-slate-300">
               {selectedBooth.description || 'Creator booth participating in this event rally.'}
             </p>
 
             <div className="mt-4">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-400">
                 <Store className="h-3.5 w-3.5" />
-                Booth Merchandise Menu
+                Booth Menu
               </p>
               {selectedBoothItems.length === 0 ? (
                 <p className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-400">
-                  No catalog items listed yet — visit the booth in person!
+                  No menu items listed yet &mdash; visit the booth in person!
                 </p>
               ) : (
                 <div className="space-y-2">
                   {selectedBoothItems.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/70 px-3.5 py-2 text-xs"
+                      className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/70 px-3.5 py-2.5 text-xs"
                     >
                       <span className="font-medium text-white">{item.item_name}</span>
-                      <span className="font-mono font-bold text-emerald-300">
+                      <span className="font-mono font-bold text-emerald-300 tabular-nums">
                         {formatIdr(item.price_idr)}
                       </span>
                     </div>

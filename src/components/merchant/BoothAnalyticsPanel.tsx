@@ -126,9 +126,9 @@ export const BoothAnalyticsPanel: React.FC<BoothAnalyticsPanelProps> = ({
             Strictly scoped to <strong>{event.name}</strong> ({tenant.booth_number}).
           </p>
         </div>
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-300">
-          <Lock className="h-3 w-3" />
-          Real Revenue (actual_spent_idr only)
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300">
+          <Lock className="h-3.5 w-3.5" />
+          Real Booth Sales &middot; Private
         </span>
       </div>
 

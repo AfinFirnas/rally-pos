@@ -22,16 +22,16 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import { getSupabaseClient, useApp } from '../../context/AppContext';
+import { useApp } from '../../context/AppContext';
 import {
   calculateDualIdrCheckout,
-  evaluateVoidReversal,
   extractEventQrCode,
   formatIdr,
   validateAntiFraudAndCooldown,
 } from '../../lib/ledgerEngine';
 import { generateClientTxId, offlineQueue } from '../../lib/offlineQueue';
 import { soundFeedback } from '../../lib/soundFeedback';
+import { apiClient } from '../../services/apiClient';
 import type {
   DemoSeedDataset,
   Event,
@@ -454,7 +454,6 @@ export const MerchantPosTerminal: React.FC<MerchantPosTerminalProps> = ({
       const clientTxId = generateClientTxId();
       const buyerName = userNameMap.get(selectedParticipant.user_id) ?? selectedParticipant.qr_code;
       const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-      const supabase = getSupabaseClient();
 
       // Offline Queue Path: venue Wi-Fi dropped -> store in IndexedDB immediately
       if (!isOnline) {
@@ -487,27 +486,54 @@ export const MerchantPosTerminal: React.FC<MerchantPosTerminalProps> = ({
         return;
       }
 
-      if (supabase) {
-        const { error } = await supabase.rpc('process_pos_checkout', {
-          p_event_id: event.id,
-          p_tenant_id: tenant.id,
-          p_buyer_qr_code: selectedParticipant.qr_code,
-          p_actual_amount_idr: amountIdr,
-          p_client_tx_id: clientTxId,
-          p_item_summary: itemCart.length > 0 ? itemCart : null,
-        });
-        if (error) {
-          throw new Error(error.message);
-        }
-      }
+      const checkoutRes = await apiClient.processPosCheckout({
+        client_tx_id: clientTxId,
+        event_id: event.id,
+        tenant_id: tenant.id,
+        buyer_qr_code: selectedParticipant.qr_code,
+        actual_amount_idr: amountIdr,
+        item_summary: itemCart.length > 0 ? itemCart : null,
+      });
 
-      await applyLocalTransactionState(calc, clientTxId);
+      onDatasetChange((prev) => ({
+        ...prev,
+        transactions: [
+          checkoutRes.transaction,
+          ...prev.transactions.filter((tx) => tx.id !== checkoutRes.transaction.id),
+        ],
+        event_participants: prev.event_participants.map((p) =>
+          p.id === checkoutRes.participant.id ? checkoutRes.participant : p
+        ),
+        tenants: prev.tenants.map((t) =>
+          t.id === checkoutRes.tenant.id ? checkoutRes.tenant : t
+        ),
+        stamps: checkoutRes.unlocked_stamp
+          ? [...prev.stamps, checkoutRes.unlocked_stamp]
+          : prev.stamps,
+        users: prev.users.map((u) => {
+          if (u.id === selectedParticipant.user_id) {
+            return {
+              ...u,
+              lifetime_actual_spent_idr:
+                u.lifetime_actual_spent_idr + checkoutRes.transaction.actual_amount_idr,
+            };
+          }
+          if (u.id === tenant.user_id) {
+            return {
+              ...u,
+              lifetime_sales_idr:
+                u.lifetime_sales_idr + checkoutRes.transaction.actual_amount_idr,
+            };
+          }
+          return u;
+        }),
+      }));
 
-      if (calc.hiddenBounty.triggered) {
+      if (checkoutRes.hidden_bounty_triggered) {
         await soundFeedback.playBountyFanfare();
         setHiddenBountyAlert({
           buyerName,
-          bonusIdr: calc.hiddenBounty.bonusIdr,
+          bonusIdr: checkoutRes.hidden_bounty_bonus_idr,
         });
       } else {
         await soundFeedback.playSuccessChime();
@@ -516,10 +542,12 @@ export const MerchantPosTerminal: React.FC<MerchantPosTerminalProps> = ({
       triggerBorderFlash('emerald');
       setLastReceiptBanner({
         type: 'success',
-        title: `Sale Completed: ${formatIdr(calc.actualAmountIdr)}`,
-        detail: `${buyerName} (+${formatIdr(calc.leaderboardAmountIdr)} Leaderboard IDR${
-          calc.multiplierApplied > 1 ? ` @ ${calc.multiplierApplied}x` : ''
-        })${calc.shouldUnlockBoothStamp ? ' • Booth Stamp Unlocked!' : ''}`,
+        title: `Sale Completed: ${formatIdr(checkoutRes.transaction.actual_amount_idr)}`,
+        detail: `${buyerName} (+${formatIdr(checkoutRes.transaction.leaderboard_amount_idr)} Leaderboard IDR${
+          checkoutRes.transaction.multiplier_applied > 1
+            ? ` @ ${checkoutRes.transaction.multiplier_applied}x`
+            : ''
+        })${checkoutRes.unlocked_stamp ? ' • Booth Stamp Unlocked!' : ''}`,
       });
       resetCheckoutInputs();
     } catch (err) {
@@ -686,106 +714,27 @@ export const MerchantPosTerminal: React.FC<MerchantPosTerminalProps> = ({
     setVoidBusy(true);
 
     try {
-      const supabase = getSupabaseClient();
-      if (!supabase && voidPinInput.trim() !== event.admin_void_pin) {
-        await soundFeedback.playErrorTone();
-        setVoidError('Invalid Organizer Admin PIN.');
-        return;
-      }
-
-      if (supabase) {
-        const { error } = await supabase.rpc('void_pos_transaction', {
-          p_transaction_id: voidTargetTx.id,
-          p_admin_void_pin: voidPinInput.trim(),
-        });
-        if (error) {
-          throw new Error(
-            error.message.includes('INVALID_VOID_PIN')
-              ? 'Invalid Organizer Admin PIN.'
-              : error.message
-          );
-        }
-      }
-
-      const participantTxs = dataset.transactions.filter(
-        (tx) =>
-          tx.event_id === event.id &&
-          tx.participant_id === voidTargetTx.participant_id
-      );
-      const hasBoothStamp = dataset.stamps.some(
-        (s) =>
-          s.event_id === event.id &&
-          s.participant_id === voidTargetTx.participant_id &&
-          s.tenant_id === tenant.id &&
-          s.stamp_type === 'booth'
+      const reverseRes = await apiClient.reversePosTransaction(
+        {
+          transaction_id: voidTargetTx.id,
+          admin_void_pin: voidPinInput.trim(),
+        },
+        currentUser?.id
       );
 
-      const reversal = evaluateVoidReversal({
-        transactionToVoid: voidTargetTx,
-        eventMinStampSpendIdr: event.min_stamp_spend_idr,
-        participantRemainingTransactions: participantTxs,
-        participantHasBoothStamp: hasBoothStamp,
-      });
-
-      if (!reversal.valid) {
-        throw new Error(reversal.errorReason ?? 'Cannot void transaction.');
-      }
-
-      const nowIso = new Date().toISOString();
       onDatasetChange((prev) => ({
         ...prev,
         transactions: prev.transactions.map((tx) =>
-          tx.id === voidTargetTx.id
-            ? {
-                ...tx,
-                status: 'voided',
-                voided_at: nowIso,
-                voided_by_user_id: currentUser?.id ?? null,
-              }
-            : tx
+          tx.id === reverseRes.transaction.id ? reverseRes.transaction : tx
         ),
         event_participants: prev.event_participants.map((p) =>
-          p.id === voidTargetTx.participant_id
-            ? {
-                ...p,
-                actual_spent_idr: Math.max(
-                  0,
-                  p.actual_spent_idr - reversal.deductActualIdr
-                ),
-                leaderboard_idr: Math.max(
-                  0,
-                  p.leaderboard_idr - reversal.deductLeaderboardIdr
-                ),
-                updated_at: nowIso,
-              }
-            : p
+          p.id === reverseRes.participant.id ? reverseRes.participant : p
         ),
         tenants: prev.tenants.map((t) =>
-          t.id === tenant.id
-            ? {
-                ...t,
-                event_sales_idr: Math.max(
-                  0,
-                  t.event_sales_idr - reversal.deductActualIdr
-                ),
-                unique_stamps_count: Math.max(
-                  0,
-                  t.unique_stamps_count - (reversal.shouldReverseBoothStamp ? 1 : 0)
-                ),
-                updated_at: nowIso,
-              }
-            : t
+          t.id === reverseRes.tenant.id ? reverseRes.tenant : t
         ),
-        stamps: reversal.shouldReverseBoothStamp
-          ? prev.stamps.filter(
-              (s) =>
-                !(
-                  s.event_id === event.id &&
-                  s.participant_id === voidTargetTx.participant_id &&
-                  s.tenant_id === tenant.id &&
-                  s.stamp_type === 'booth'
-                )
-            )
+        stamps: reverseRes.reversed_stamp_id
+          ? prev.stamps.filter((s) => s.id !== reverseRes.reversed_stamp_id)
           : prev.stamps,
       }));
 
@@ -794,14 +743,17 @@ export const MerchantPosTerminal: React.FC<MerchantPosTerminalProps> = ({
       setVoidPinInput('');
       setLastReceiptBanner({
         type: 'success',
-        title: `Voided ${formatIdr(reversal.deductActualIdr)}`,
+        title: `Voided ${formatIdr(reverseRes.deduct_actual_idr)}`,
         detail: `Deducted Dual-IDR totals${
-          reversal.shouldReverseBoothStamp ? ' & reversed booth stamp.' : '.'
+          reverseRes.reversed_stamp_id ? ' & reversed booth stamp.' : '.'
         }`,
       });
     } catch (err) {
       await soundFeedback.playErrorTone();
-      setVoidError(err instanceof Error ? err.message : 'Void failed.');
+      const raw = err instanceof Error ? err.message : 'Void failed.';
+      setVoidError(
+        raw.includes('INVALID_VOID_PIN') ? 'Invalid Organizer Admin PIN.' : raw
+      );
     } finally {
       setVoidBusy(false);
     }

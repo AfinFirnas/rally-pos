@@ -22,68 +22,18 @@ import {
   Upload,
   Zap,
 } from 'lucide-react';
-import { getSupabaseClient, useApp } from '../context/AppContext';
-import { evaluateVoidReversal, formatIdr, parseIdrInput } from '../lib/ledgerEngine';
+import { useApp } from '../context/AppContext';
+import { formatIdr, parseIdrInput } from '../lib/ledgerEngine';
 import { soundFeedback } from '../lib/soundFeedback';
+import { apiClient } from '../services/apiClient';
 import type {
   DemoSeedDataset,
   Event,
-  EventChatMessage,
   TicketRoleType,
-  TicketUid,
   Transaction,
 } from '../types/types';
 
 type AdminTab = 'lifecycle' | 'tickets' | 'radar' | 'bounty_fraud';
-
-const DEMO_STORE_KEY = 'rallypos_demo_dataset_v1';
-const TICKET_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-
-function readLatestDataset(fallback: DemoSeedDataset, isDemoMode: boolean): DemoSeedDataset {
-  if (!isDemoMode || typeof window === 'undefined') return fallback;
-  try {
-    const raw = window.localStorage.getItem(DEMO_STORE_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as DemoSeedDataset;
-    return Array.isArray(parsed.events) ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function createUuid(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-function generateTicketCode(role: TicketRoleType, existingSet: Set<string>): string {
-  const suffix = role === 'merchant' ? 'SLR' : 'BYR';
-  const cryptoApi = globalThis.crypto;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    let mid = '';
-    if (cryptoApi?.getRandomValues) {
-      const buf = new Uint8Array(4);
-      cryptoApi.getRandomValues(buf);
-      for (let i = 0; i < 4; i++) {
-        mid += TICKET_ALPHABET[buf[i] % TICKET_ALPHABET.length];
-      }
-    } else {
-      mid = Math.random().toString(36).slice(2, 6).toUpperCase();
-    }
-    const candidate = `TKT-${mid}-${suffix}`;
-    if (!existingSet.has(candidate)) {
-      existingSet.add(candidate);
-      return candidate;
-    }
-  }
-  return `TKT-${Date.now().toString(36).slice(-4).toUpperCase()}-${suffix}`;
-}
 
 function csvEscape(value: string | number | boolean | null | undefined): string {
   const str = value === null || value === undefined ? '' : String(value);
@@ -94,28 +44,11 @@ function csvEscape(value: string | number | boolean | null | undefined): string 
 }
 
 export const AdminCommandPage: React.FC = () => {
-  const { currentUser, dataset, isDemoMode } = useApp();
-
-  const [liveDataset, setLiveDataset] = useState<DemoSeedDataset>(() =>
-    readLatestDataset(dataset, isDemoMode)
-  );
-
-  useEffect(() => {
-    setLiveDataset(readLatestDataset(dataset, isDemoMode));
-  }, [dataset, isDemoMode]);
+  const { currentUser, dataset, updateDataset } = useApp();
+  const liveDataset = dataset;
 
   const updateLiveDataset = (updater: (prev: DemoSeedDataset) => DemoSeedDataset) => {
-    setLiveDataset((prev) => {
-      const next = updater(prev);
-      if (isDemoMode && typeof window !== 'undefined') {
-        try {
-          window.localStorage.setItem(DEMO_STORE_KEY, JSON.stringify(next));
-        } catch {
-          // Ignore storage quota errors
-        }
-      }
-      return next;
-    });
+    updateDataset(updater);
   };
 
   const [activeTab, setActiveTab] = useState<AdminTab>('radar');
@@ -288,42 +221,16 @@ export const AdminCommandPage: React.FC = () => {
     setCreatingEvent(true);
     setErrorMsg(null);
     try {
-      const nowIso = new Date().toISOString();
-      const newEvent: Event = {
-        id: createUuid(),
-        name: cleanName,
-        description: newEventDesc.trim() || 'Live Dual-IDR POS & Stamp Rally event.',
-        status: 'draft',
-        min_stamp_spend_idr: minSpend,
-        admin_void_pin: cleanPin,
-        cold_bounty_multiplier: 1.25,
-        hidden_bounty_bonus_idr: 25000,
-        venue_zones: ['Main Stage', 'Photo Zone A', 'Photo Zone B', 'Cosplay Lounge'],
-        event_date: nowIso,
-        started_at: null,
-        ended_at: null,
-        created_by: currentUser?.id ?? null,
-        created_at: nowIso,
-        updated_at: nowIso,
-      };
-
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('events')
-          .insert({
-            name: newEvent.name,
-            description: newEvent.description,
-            status: 'draft',
-            min_stamp_spend_idr: newEvent.min_stamp_spend_idr,
-            admin_void_pin: newEvent.admin_void_pin,
-            created_by: currentUser?.id ?? null,
-          })
-          .select('*')
-          .single();
-        if (error) throw new Error(error.message);
-        if (data) newEvent.id = (data as Event).id;
-      }
+      const { event: newEvent } = await apiClient.createEvent(
+        {
+          name: cleanName,
+          description:
+            newEventDesc.trim() || 'Live Dual-IDR POS & Stamp Rally event.',
+          min_stamp_spend_idr: minSpend,
+          admin_void_pin: cleanPin,
+        },
+        currentUser?.id
+      );
 
       updateLiveDataset((prev) => ({
         ...prev,
@@ -342,139 +249,72 @@ export const AdminCommandPage: React.FC = () => {
   };
 
   const handleSetEventStatus = async (ev: Event, nextStatus: 'active' | 'archived') => {
-    const nowIso = new Date().toISOString();
-    const supabase = getSupabaseClient();
+    try {
+      const { event: updatedEvent, welcome_announcement } =
+        await apiClient.updateEventStatus(
+          ev.id,
+          nextStatus,
+          currentUser ?? undefined
+        );
 
-    if (supabase) {
-      const patch =
+      updateLiveDataset((prev) => ({
+        ...prev,
+        events: prev.events.map((item) =>
+          item.id === updatedEvent.id ? updatedEvent : item
+        ),
+        event_chat_messages: welcome_announcement
+          ? [welcome_announcement, ...prev.event_chat_messages]
+          : prev.event_chat_messages,
+      }));
+
+      await soundFeedback.playTapTick();
+      showToast(
         nextStatus === 'active'
-          ? { status: 'active', started_at: ev.started_at ?? nowIso }
-          : { status: 'archived', ended_at: nowIso };
-      const { error } = await supabase.from('events').update(patch).eq('id', ev.id);
-      if (error) {
-        setErrorMsg(error.message);
-        return;
-      }
-    }
-
-    // Automatically create welcome announcement when an event starts
-    let welcomeAnnouncement: EventChatMessage | null = null;
-    if (nextStatus === 'active' && currentUser) {
-      const hasAnnouncement = liveDataset.event_chat_messages.some(
-        (m) => m.event_id === ev.id && m.message_type === 'admin_announcement'
+          ? `${ev.name} is now LIVE! Event Hub, POS & Group Chat activated.`
+          : `${ev.name} has been archived and final standings locked.`
       );
-      if (!hasAnnouncement) {
-        welcomeAnnouncement = {
-          id: createUuid(),
-          event_id: ev.id,
-          sender_user_id: currentUser.id,
-          sender_username: currentUser.username,
-          sender_role: 'organizer',
-          message_type: 'admin_announcement',
-          announcement_text: `Welcome to ${ev.name}! Collect booth stamps (${formatIdr(
-            ev.min_stamp_spend_idr
-          )}+ per booth) and visit 3 booths in 60 minutes for a 1.25x streak boost!`,
-          target_character: null,
-          target_location: null,
-          target_activity: null,
-          interested_user_ids: [],
-          is_pinned: true,
-          created_at: nowIso,
-        };
-        if (supabase) {
-          await supabase.from('event_chat_messages').insert({
-            event_id: ev.id,
-            sender_user_id: currentUser.id,
-            sender_username: currentUser.username,
-            sender_role: 'organizer',
-            message_type: 'admin_announcement',
-            announcement_text: welcomeAnnouncement.announcement_text,
-            is_pinned: true,
-          });
-        }
-      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to update event status.');
     }
-
-    updateLiveDataset((prev) => ({
-      ...prev,
-      events: prev.events.map((item) =>
-        item.id === ev.id
-          ? {
-              ...item,
-              status: nextStatus,
-              started_at: nextStatus === 'active' ? item.started_at ?? nowIso : item.started_at,
-              ended_at: nextStatus === 'archived' ? nowIso : item.ended_at,
-              updated_at: nowIso,
-            }
-          : item
-      ),
-      event_chat_messages: welcomeAnnouncement
-        ? [welcomeAnnouncement, ...prev.event_chat_messages]
-        : prev.event_chat_messages,
-    }));
-
-    await soundFeedback.playTapTick();
-    showToast(
-      nextStatus === 'active'
-        ? `${ev.name} is now LIVE! Event Hub, POS & Group Chat activated.`
-        : `${ev.name} has been archived and final standings locked.`
-    );
   };
 
   // --------------------------------------------------------------------------
-  // 2. TICKET UID GENERATOR & CSV BULK IMPORT
+  // 2. TICKET CODE GENERATOR & CSV BULK IMPORT
   // --------------------------------------------------------------------------
 
   const handleGenerateTickets = async () => {
     if (!selectedEvent) return;
     const count = Math.max(1, Math.min(50, ticketBatchCount));
-    const existingSet = new Set(liveDataset.ticket_uids.map((t) => t.uid_code.toUpperCase()));
-    const nowIso = new Date().toISOString();
 
-    const newRows: TicketUid[] = Array.from({ length: count }, () => ({
-      id: createUuid(),
-      event_id: selectedEvent.id,
-      uid_code: generateTicketCode(ticketRole, existingSet),
-      role_type: ticketRole,
-      claimed_by_user_id: null,
-      claimed_at: null,
-      created_at: nowIso,
-    }));
-
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { error } = await supabase.from('ticket_uids').insert(
-        newRows.map((r) => ({
-          event_id: r.event_id,
-          uid_code: r.uid_code,
-          role_type: r.role_type,
-        }))
+    try {
+      const { tickets: newRows } = await apiClient.createEventTickets(
+        selectedEvent.id,
+        { mode: 'generate', role_type: ticketRole, count }
       );
-      if (error) {
-        setErrorMsg(error.message);
-        return;
-      }
-    }
 
-    updateLiveDataset((prev) => ({
-      ...prev,
-      ticket_uids: [...newRows, ...prev.ticket_uids],
-    }));
-    await soundFeedback.playTapTick();
-    showToast(`Generated ${count} ${ticketRole.toUpperCase()} Ticket UID(s) for ${selectedEvent.name}.`);
+      updateLiveDataset((prev) => ({
+        ...prev,
+        ticket_uids: [...newRows, ...prev.ticket_uids],
+      }));
+      await soundFeedback.playTapTick();
+      showToast(
+        `Generated ${newRows.length} ${ticketRole.toUpperCase()} Event Ticket Code(s) for ${selectedEvent.name}.`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to generate tickets.');
+    }
   };
 
   const processCsvTicketLines = async (rawText: string) => {
     if (!selectedEvent) return;
     const existingSet = new Set(liveDataset.ticket_uids.map((t) => t.uid_code.toUpperCase()));
-    const nowIso = new Date().toISOString();
 
     const lines = rawText
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean);
 
-    const parsedTickets: TicketUid[] = [];
+    const parsedTickets: Array<{ uid_code: string; role_type: TicketRoleType }> = [];
     for (const line of lines) {
       const [rawCode, rawRole] = line.split(/[,\t;]/).map((s) => s.trim());
       if (!rawCode || rawCode.toLowerCase() === 'uid_code') continue;
@@ -488,43 +328,34 @@ export const AdminCommandPage: React.FC = () => {
           : 'buyer';
 
       parsedTickets.push({
-        id: createUuid(),
-        event_id: selectedEvent.id,
         uid_code: cleanCode,
         role_type: role,
-        claimed_by_user_id: null,
-        claimed_at: null,
-        created_at: nowIso,
       });
     }
 
     if (parsedTickets.length === 0) {
-      setErrorMsg('No new unique Ticket UIDs found in CSV input.');
+      setErrorMsg('No new unique Event Ticket Codes found in CSV input.');
       return;
     }
 
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { error } = await supabase.from('ticket_uids').insert(
-        parsedTickets.map((t) => ({
-          event_id: t.event_id,
-          uid_code: t.uid_code,
-          role_type: t.role_type,
-        }))
+    try {
+      const { tickets: createdTickets } = await apiClient.createEventTickets(
+        selectedEvent.id,
+        { mode: 'import', tickets: parsedTickets }
       );
-      if (error) {
-        setErrorMsg(error.message);
-        return;
-      }
-    }
 
-    updateLiveDataset((prev) => ({
-      ...prev,
-      ticket_uids: [...parsedTickets, ...prev.ticket_uids],
-    }));
-    setCsvBulkText('');
-    await soundFeedback.playTapTick();
-    showToast(`Imported ${parsedTickets.length} Ticket UID(s) into ${selectedEvent.name}.`);
+      updateLiveDataset((prev) => ({
+        ...prev,
+        ticket_uids: [...createdTickets, ...prev.ticket_uids],
+      }));
+      setCsvBulkText('');
+      await soundFeedback.playTapTick();
+      showToast(
+        `Imported ${createdTickets.length} Event Ticket Code(s) into ${selectedEvent.name}.`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to import CSV ticket codes.');
+    }
   };
 
   const handleCsvFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -560,98 +391,54 @@ export const AdminCommandPage: React.FC = () => {
       Number.isFinite(parsedMult) && parsedMult >= 1.05 && parsedMult <= 3.0
         ? Math.round(parsedMult * 100) / 100
         : 1.25;
-    const expiresIso = new Date(Date.now() + 30 * 60_000).toISOString();
 
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { error } = await supabase
-        .from('tenants')
-        .update({
-          is_cold_bounty: true,
-          cold_bounty_expires_at: expiresIso,
-          cold_bounty_multiplier: multiplier,
-        })
-        .in('id', selectedColdBoothIds);
-      if (error) {
-        setErrorMsg(error.message);
-        return;
-      }
+    try {
+      const { tenants: updatedBooths, announcement } =
+        await apiClient.activateColdBounty(
+          selectedEvent.id,
+          {
+            tenant_ids: selectedColdBoothIds,
+            multiplier,
+            duration_minutes: 30,
+          },
+          currentUser ?? undefined
+        );
+
+      const updatedMap = new Map(updatedBooths.map((t) => [t.id, t]));
+      updateLiveDataset((prev) => ({
+        ...prev,
+        tenants: prev.tenants.map((t) => updatedMap.get(t.id) ?? t),
+        event_chat_messages: announcement
+          ? [announcement, ...prev.event_chat_messages]
+          : prev.event_chat_messages,
+      }));
+
+      setSelectedColdBoothIds([]);
+      await soundFeedback.playBountyFanfare(false);
+      showToast(
+        `Activated 30-min ${multiplier}x Gold Cold-Booth Bounty on ${updatedBooths.length} booth(s)!`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to activate Cold-Booth Bounty.');
     }
-
-    const boostedNames = radarBooths
-      .filter((b) => selectedColdBoothIds.includes(b.id))
-      .map((b) => `${b.booth_number} ${b.booth_name}`);
-
-    const announcement: EventChatMessage | null = currentUser
-      ? {
-          id: createUuid(),
-          event_id: selectedEvent.id,
-          sender_user_id: currentUser.id,
-          sender_username: currentUser.username,
-          sender_role: 'organizer',
-          message_type: 'admin_announcement',
-          announcement_text: `GOLD COLD-BOOTH BOUNTY LIVE (30m): ${boostedNames.join(
-            ', '
-          )} now grant a ${multiplier}x Leaderboard Spend Boost!`,
-          target_character: null,
-          target_location: null,
-          target_activity: null,
-          interested_user_ids: [],
-          is_pinned: true,
-          created_at: new Date().toISOString(),
-        }
-      : null;
-
-    if (supabase && announcement) {
-      await supabase.from('event_chat_messages').insert({
-        event_id: selectedEvent.id,
-        sender_user_id: currentUser!.id,
-        sender_username: currentUser!.username,
-        sender_role: 'organizer',
-        message_type: 'admin_announcement',
-        announcement_text: announcement.announcement_text,
-        is_pinned: true,
-      });
-    }
-
-    updateLiveDataset((prev) => ({
-      ...prev,
-      tenants: prev.tenants.map((t) =>
-        selectedColdBoothIds.includes(t.id)
-          ? {
-              ...t,
-              is_cold_bounty: true,
-              cold_bounty_expires_at: expiresIso,
-              cold_bounty_multiplier: multiplier,
-            }
-          : t
-      ),
-      event_chat_messages: announcement
-        ? [announcement, ...prev.event_chat_messages]
-        : prev.event_chat_messages,
-    }));
-
-    setSelectedColdBoothIds([]);
-    await soundFeedback.playBountyFanfare(false);
-    showToast(`Activated 30-min ${multiplier}x Gold Cold-Booth Bounty on ${boostedNames.length} booth(s)!`);
   };
 
   const handleClearColdBounty = async (tenantId: string) => {
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase
-        .from('tenants')
-        .update({ is_cold_bounty: false, cold_bounty_expires_at: null })
-        .eq('id', tenantId);
+    if (!selectedEvent) return;
+    try {
+      const { tenant: updatedTenant } = await apiClient.clearColdBounty(
+        selectedEvent.id,
+        tenantId
+      );
+      updateLiveDataset((prev) => ({
+        ...prev,
+        tenants: prev.tenants.map((t) =>
+          t.id === updatedTenant.id ? updatedTenant : t
+        ),
+      }));
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to stop boost.');
     }
-    updateLiveDataset((prev) => ({
-      ...prev,
-      tenants: prev.tenants.map((t) =>
-        t.id === tenantId
-          ? { ...t, is_cold_bounty: false, cold_bounty_expires_at: null }
-          : t
-      ),
-    }));
   };
 
   // --------------------------------------------------------------------------
@@ -659,148 +446,99 @@ export const AdminCommandPage: React.FC = () => {
   // --------------------------------------------------------------------------
 
   const handleToggleHiddenBounty = async (tenantId: string, nextValue: boolean) => {
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase
-        .from('tenants')
-        .update({ is_hidden_bounty: nextValue })
-        .eq('id', tenantId);
+    try {
+      const { tenant: updatedTenant } = await apiClient.toggleHiddenBounty(
+        tenantId,
+        nextValue
+      );
+      updateLiveDataset((prev) => ({
+        ...prev,
+        tenants: prev.tenants.map((t) =>
+          t.id === updatedTenant.id ? updatedTenant : t
+        ),
+      }));
+      await soundFeedback.playTapTick();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to toggle hidden bounty.');
     }
-    updateLiveDataset((prev) => ({
-      ...prev,
-      tenants: prev.tenants.map((t) =>
-        t.id === tenantId ? { ...t, is_hidden_bounty: nextValue } : t
-      ),
-    }));
-    await soundFeedback.playTapTick();
   };
 
   const handleRotateHourlyHiddenBounties = async () => {
     if (!selectedEvent || radarBooths.length === 0) return;
-    const targetCount = Math.min(radarBooths.length, Math.max(3, Math.min(5, Math.ceil(radarBooths.length / 2))));
-    const shuffled = [...radarBooths].sort(() => Math.random() - 0.5);
-    const chosenIds = new Set(shuffled.slice(0, targetCount).map((b) => b.id));
+    const targetCount = Math.min(
+      radarBooths.length,
+      Math.max(3, Math.min(5, Math.ceil(radarBooths.length / 2)))
+    );
 
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      for (const b of radarBooths) {
-        await supabase
-          .from('tenants')
-          .update({ is_hidden_bounty: chosenIds.has(b.id) })
-          .eq('id', b.id);
-      }
+    try {
+      const { tenants: rotatedBooths } = await apiClient.rotateHiddenBounties(
+        selectedEvent.id,
+        targetCount
+      );
+      const updatedMap = new Map(rotatedBooths.map((t) => [t.id, t]));
+      updateLiveDataset((prev) => ({
+        ...prev,
+        tenants: prev.tenants.map((t) => updatedMap.get(t.id) ?? t),
+      }));
+
+      const activeCount = rotatedBooths.filter((b) => b.is_hidden_bounty).length;
+      await soundFeedback.playBountyFanfare(false);
+      showToast(
+        `Rotated ${activeCount} secret Hourly Hidden Bounty booths for ${selectedEvent.name}!`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to rotate hidden bounties.');
     }
-
-    updateLiveDataset((prev) => ({
-      ...prev,
-      tenants: prev.tenants.map((t) =>
-        t.event_id === selectedEvent.id
-          ? { ...t, is_hidden_bounty: chosenIds.has(t.id) }
-          : t
-      ),
-    }));
-
-    await soundFeedback.playBountyFanfare(false);
-    showToast(`Rotated ${chosenIds.size} secret Hourly Hidden Bounty booths for ${selectedEvent.name}!`);
   };
 
   const handleDismissFraudFlag = async (txId: string) => {
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase.from('transactions').update({ is_flagged: false }).eq('id', txId);
+    try {
+      const { transaction: updatedTx } = await apiClient.dismissTransactionFlag(txId);
+      updateLiveDataset((prev) => ({
+        ...prev,
+        transactions: prev.transactions.map((tx) =>
+          tx.id === updatedTx.id ? updatedTx : tx
+        ),
+      }));
+      showToast('Flag dismissed after organizer review.');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to dismiss flag.');
     }
-    updateLiveDataset((prev) => ({
-      ...prev,
-      transactions: prev.transactions.map((tx) =>
-        tx.id === txId ? { ...tx, is_flagged: false } : tx
-      ),
-    }));
-    showToast('Flag dismissed after organizer review.');
   };
 
   const handleAdminVoidTransaction = async (tx: Transaction) => {
     const ev = liveDataset.events.find((e) => e.id === tx.event_id);
     if (!ev) return;
 
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { error } = await supabase.rpc('void_pos_transaction', {
-        p_transaction_id: tx.id,
-        p_admin_void_pin: ev.admin_void_pin,
-      });
-      if (error) {
-        setErrorMsg(error.message);
-        return;
-      }
+    try {
+      const reverseRes = await apiClient.reversePosTransaction(
+        {
+          transaction_id: tx.id,
+          admin_void_pin: ev.admin_void_pin,
+        },
+        currentUser?.id
+      );
+
+      updateLiveDataset((prev) => ({
+        ...prev,
+        transactions: prev.transactions.map((item) =>
+          item.id === reverseRes.transaction.id ? reverseRes.transaction : item
+        ),
+        event_participants: prev.event_participants.map((p) =>
+          p.id === reverseRes.participant.id ? reverseRes.participant : p
+        ),
+        tenants: prev.tenants.map((t) =>
+          t.id === reverseRes.tenant.id ? reverseRes.tenant : t
+        ),
+        stamps: reverseRes.reversed_stamp_id
+          ? prev.stamps.filter((s) => s.id !== reverseRes.reversed_stamp_id)
+          : prev.stamps,
+      }));
+
+      showToast(`Voided flagged transaction (${formatIdr(tx.actual_amount_idr)}).`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to void transaction.');
     }
-
-    const participantTxs = liveDataset.transactions.filter(
-      (t) => t.event_id === tx.event_id && t.participant_id === tx.participant_id
-    );
-    const hasBoothStamp = liveDataset.stamps.some(
-      (s) =>
-        s.event_id === tx.event_id &&
-        s.participant_id === tx.participant_id &&
-        s.tenant_id === tx.tenant_id &&
-        s.stamp_type === 'booth'
-    );
-    const reversal = evaluateVoidReversal({
-      transactionToVoid: tx,
-      eventMinStampSpendIdr: ev.min_stamp_spend_idr,
-      participantRemainingTransactions: participantTxs,
-      participantHasBoothStamp: hasBoothStamp,
-    });
-    if (!reversal.valid) return;
-
-    const nowIso = new Date().toISOString();
-    updateLiveDataset((prev) => ({
-      ...prev,
-      transactions: prev.transactions.map((item) =>
-        item.id === tx.id
-          ? {
-              ...item,
-              status: 'voided',
-              is_flagged: false,
-              voided_at: nowIso,
-              voided_by_user_id: currentUser?.id ?? null,
-            }
-          : item
-      ),
-      event_participants: prev.event_participants.map((p) =>
-        p.id === tx.participant_id
-          ? {
-              ...p,
-              actual_spent_idr: Math.max(0, p.actual_spent_idr - reversal.deductActualIdr),
-              leaderboard_idr: Math.max(0, p.leaderboard_idr - reversal.deductLeaderboardIdr),
-            }
-          : p
-      ),
-      tenants: prev.tenants.map((t) =>
-        t.id === tx.tenant_id
-          ? {
-              ...t,
-              event_sales_idr: Math.max(0, t.event_sales_idr - reversal.deductActualIdr),
-              unique_stamps_count: Math.max(
-                0,
-                t.unique_stamps_count - (reversal.shouldReverseBoothStamp ? 1 : 0)
-              ),
-            }
-          : t
-      ),
-      stamps: reversal.shouldReverseBoothStamp
-        ? prev.stamps.filter(
-            (s) =>
-              !(
-                s.event_id === tx.event_id &&
-                s.participant_id === tx.participant_id &&
-                s.tenant_id === tx.tenant_id &&
-                s.stamp_type === 'booth'
-              )
-          )
-        : prev.stamps,
-    }));
-
-    showToast(`Voided flagged transaction (${formatIdr(tx.actual_amount_idr)}).`);
   };
 
   const handleExportMasterLedgerCsv = () => {
@@ -908,7 +646,7 @@ export const AdminCommandPage: React.FC = () => {
                 label: `Hidden Bounties, Fraud (${flaggedTransactions.length}) & Ledger`,
                 icon: ShieldAlert,
               },
-              { id: 'tickets', label: 'Ticket UIDs & CSV Import', icon: Ticket },
+              { id: 'tickets', label: 'Event Ticket Codes & CSV Import', icon: Ticket },
               { id: 'lifecycle', label: 'Multi-Event Lifecycle', icon: Sparkles },
             ] as const
           ).map((tab) => {
@@ -1343,10 +1081,10 @@ export const AdminCommandPage: React.FC = () => {
             <div className="rounded-2xl border border-slate-800 bg-slate-900/85 p-5">
               <h2 className="flex items-center gap-2 text-base font-bold text-white">
                 <Ticket className="h-5 w-5 text-indigo-400" />
-                Generate Ticket UIDs
+                Generate Event Ticket Codes
               </h2>
               <p className="mt-1 text-xs text-slate-400">
-                Create Buyer or Merchant Ticket UIDs for <strong>{selectedEvent.name}</strong>.
+                Create Attendee or Booth Event Ticket Codes for <strong>{selectedEvent.name}</strong>.
               </p>
 
               <div className="mt-4 grid grid-cols-2 gap-2">
@@ -1426,7 +1164,7 @@ export const AdminCommandPage: React.FC = () => {
                 type="text"
                 value={ticketSearch}
                 onChange={(e) => setTicketSearch(e.target.value)}
-                placeholder="Search Ticket UID or claimer..."
+                placeholder="Search Event Ticket Code or claimer..."
                 className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white"
               />
             </div>
@@ -1471,7 +1209,7 @@ export const AdminCommandPage: React.FC = () => {
                           window.setTimeout(() => setCopiedTicketId(null), 1200);
                         }}
                         className="rounded-lg bg-slate-800 p-1.5 text-slate-300 hover:text-white"
-                        title="Copy Ticket UID"
+                        title="Copy Event Ticket Code"
                       >
                         <Copy className="h-3.5 w-3.5" />
                       </button>

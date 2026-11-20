@@ -1809,24 +1809,8 @@ export const DEMO_SEED_DATA: DemoSeedDataset = {
 };
 
 // ----------------------------------------------------------------------------
-// SUPABASE IDEMPOTENT SEEDER & INTEGRITY VERIFIER
+// SEED INTEGRITY VERIFIER
 // ----------------------------------------------------------------------------
-
-export interface SupabaseTableQuery {
-  upsert(
-    values: unknown,
-    options?: { onConflict?: string; ignoreDuplicates?: boolean }
-  ): Promise<{ error: { message: string } | null }>;
-}
-
-export interface SupabaseClientLike {
-  from(table: string): SupabaseTableQuery;
-}
-
-export interface SeedExecutionReport {
-  insertedCounts: Record<keyof DemoSeedDataset, number>;
-  errors: Array<{ table: keyof DemoSeedDataset; message: string }>;
-}
 
 /**
  * Verifies mathematical consistency across Dual-IDR ledgers, stamps, and rollups.
@@ -1887,57 +1871,4 @@ export function verifySeedIntegrity(dataset: DemoSeedDataset = DEMO_SEED_DATA): 
   }
 
   return { valid: issues.length === 0, issues };
-}
-
-/**
- * Seeds all 9 PostgreSQL tables in strict foreign-key dependency order.
- * Safe to re-run (idempotent via primary-key upsert).
- */
-export async function seedSupabaseDatabase(
-  supabase: SupabaseClientLike,
-  dataset: DemoSeedDataset = DEMO_SEED_DATA
-): Promise<SeedExecutionReport> {
-  const integrity = verifySeedIntegrity(dataset);
-  if (!integrity.valid) {
-    throw new Error(`Seed integrity check failed: ${integrity.issues.join(' | ')}`);
-  }
-
-  const orderedTables: Array<keyof DemoSeedDataset> = [
-    'users',
-    'events',
-    'ticket_uids',
-    'event_participants',
-    'tenants',
-    'tenant_items',
-    'stamps',
-    'transactions',
-    'event_chat_messages',
-  ];
-
-  const insertedCounts: Record<keyof DemoSeedDataset, number> = {
-    users: 0,
-    events: 0,
-    ticket_uids: 0,
-    event_participants: 0,
-    tenants: 0,
-    tenant_items: 0,
-    stamps: 0,
-    transactions: 0,
-    event_chat_messages: 0,
-  };
-  const errors: Array<{ table: keyof DemoSeedDataset; message: string }> = [];
-
-  for (const table of orderedTables) {
-    const rows = dataset[table];
-    if (rows.length === 0) continue;
-
-    const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
-    if (error) {
-      errors.push({ table, message: error.message });
-    } else {
-      insertedCounts[table] = rows.length;
-    }
-  }
-
-  return { insertedCounts, errors };
 }

@@ -41,6 +41,19 @@ export const AuthPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (mode === 'register' && username.trim().length < 3) {
+      setError('Display Name must be at least 3 characters.');
+      return;
+    }
+    if (!email.trim() || !email.includes('@')) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
     setError(null);
     setSubmitting(true);
     try {
@@ -52,7 +65,7 @@ export const AuthPage: React.FC = () => {
       }
       navigate('/events');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed.');
+      setError(err instanceof Error ? err.message : 'Sign-in failed.');
     } finally {
       setSubmitting(false);
     }
@@ -66,7 +79,7 @@ export const AuthPage: React.FC = () => {
       await loginWithDemoAccount(chosenPreset);
       navigate('/events');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to start demo session.');
+      setError(err instanceof Error ? err.message : 'Unable to launch Interactive Demo Preview.');
     } finally {
       setSubmitting(false);
     }
@@ -82,77 +95,82 @@ export const AuthPage: React.FC = () => {
   };
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-6xl items-center px-4 py-10">
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-6xl items-center px-4 py-8 sm:py-10">
       <div className="grid w-full gap-8 lg:grid-cols-12 lg:items-center">
         {/* Left Hero Column */}
-        <div className="space-y-6 lg:col-span-6">
-          <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/35 bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-300">
+        <div className="space-y-5 lg:col-span-6">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-300">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>Dual-IDR Event POS &amp; Digital Stamp Rally</span>
+            <span>Convention Pass &amp; Digital Stamp Rally</span>
           </div>
 
-          <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-            Every Rupiah Tracked.
+          <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl [text-wrap:balance]">
+            Every Booth Visited.
             <span className="block bg-gradient-to-r from-indigo-400 via-sky-300 to-emerald-400 bg-clip-text text-transparent">
-              Every Booth Becomes an Experience.
+              Every Stamp Collected.
             </span>
           </h1>
 
           <p className="text-sm leading-relaxed text-slate-300 sm:text-base">
-            Join live convention hubs using your Ticket UID, collect 1:1 custom merchant stamps,
-            trigger 60-minute <strong className="text-white">1.25x</strong> leaderboard streaks, or
-            upgrade anytime to run a camera-powered IDR booth POS terminal.
+            Check in with your Event Ticket Code, collect 1:1 custom booth stamps, trigger
+            60-minute <strong className="text-white">1.25x</strong> leaderboard streaks, or
+            unlock a booth terminal anytime.
           </p>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-indigo-300">
                 <ShoppingBag className="h-4 w-4" />
-                <span>Starts in Buyer Mode</span>
+                <span>Attendee Pass Ready</span>
               </div>
               <p className="mt-1 text-xs text-slate-400">
-                New accounts immediately unlock Buyer dashboards, QR check-in badges, and private
-                actual-spend analytics.
+                Get your personal Attendee Checkout QR, private spend summary, and digital stamp
+                passport immediately.
               </p>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
                 <Store className="h-4 w-4" />
-                <span>Instant Merchant Switch</span>
+                <span>Optional Booth Switch</span>
               </div>
               <p className="mt-1 text-xs text-slate-400">
-                Link a Booth Ticket UID anytime to toggle freely between{' '}
-                <strong className="text-slate-200">Buyer Mode &hArr; Merchant Mode</strong>.
+                Link a Booth Event Ticket Code anytime to switch seamlessly between{' '}
+                <strong className="text-slate-200">Buyer &hArr; Booth</strong> views.
               </p>
             </div>
           </div>
 
-          {/* 1-Click Demo Testing Panel */}
+          {/* Interactive Demo Preview Panel */}
           <div className="rounded-2xl border border-indigo-500/35 bg-gradient-to-br from-indigo-950/60 via-slate-900 to-slate-900 p-5 shadow-xl">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-bold text-white">
                 <Zap className="h-4 w-4 text-amber-400" />
-                <span>Instant Pre-Seeded Demo Mode</span>
+                <span>Interactive Demo Preview</span>
               </div>
-              <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
-                {isDemoMode ? 'Offline-Ready' : 'Quick Test'}
+              <span className="text-[11px] font-semibold text-emerald-300">
+                {isDemoMode ? 'Offline-Ready' : 'Quick Preview'}
               </span>
             </div>
 
             <p className="mt-1.5 text-xs text-slate-300">
-              Test Comifuro Demo immediately with pre-seeded booths, 15 attendees, and Ticket UIDs{' '}
-              <code className="rounded bg-slate-800 px-1.5 py-0.5 text-indigo-300">TKT-DEMO-BYR</code>{' '}
-              /{' '}
-              <code className="rounded bg-slate-800 px-1.5 py-0.5 text-emerald-300">TKT-DEMO-SLR</code>.
+              Explore Comifuro Demo with sample booths, attendees, and Event Ticket Codes{' '}
+              <code className="rounded bg-slate-800 px-1.5 py-0.5 text-indigo-300">
+                TKT-DEMO-BYR
+              </code>{' '}
+              &amp;{' '}
+              <code className="rounded bg-slate-800 px-1.5 py-0.5 text-emerald-300">
+                TKT-DEMO-SLR
+              </code>
+              .
             </p>
 
             <div className="mt-3 grid grid-cols-2 gap-2">
               {(
                 [
-                  { id: 'fresh_buyer', label: 'New Buyer (Test UID)', icon: QrCode },
-                  { id: 'active_buyer', label: 'Rizky (#1 Buyer)', icon: ShoppingBag },
-                  { id: 'merchant', label: 'KitsuneInk (Merchant)', icon: Store },
-                  { id: 'admin', label: 'Organizer Admin', icon: Shield },
+                  { id: 'fresh_buyer', label: 'New Attendee (Code)', icon: QrCode },
+                  { id: 'active_buyer', label: 'Rizky (#1 Patron)', icon: ShoppingBag },
+                  { id: 'merchant', label: 'KitsuneInk (Booth)', icon: Store },
+                  { id: 'admin', label: 'Event Organizer', icon: Shield },
                 ] as const
               ).map((item) => {
                 const Icon = item.icon;
@@ -162,7 +180,7 @@ export const AuthPage: React.FC = () => {
                     key={item.id}
                     type="button"
                     onClick={() => setDemoPreset(item.id)}
-                    className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
+                    className={`flex min-h-[44px] items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
                       selected
                         ? 'border-indigo-400 bg-indigo-500/20 text-white'
                         : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
@@ -179,9 +197,9 @@ export const AuthPage: React.FC = () => {
               type="button"
               disabled={submitting}
               onClick={() => void handleDemoContinue(demoPreset)}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:from-indigo-500 hover:to-emerald-500 disabled:opacity-60"
+              className="mt-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:from-indigo-500 hover:to-emerald-500 disabled:opacity-60"
             >
-              <span>Continue with Demo Account</span>
+              <span>Launch Demo Preview</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
@@ -197,7 +215,7 @@ export const AuthPage: React.FC = () => {
                   setMode('login');
                   setError(null);
                 }}
-                className={`rounded-lg py-2 text-sm font-semibold transition ${
+                className={`min-h-[40px] rounded-lg py-2 text-sm font-semibold transition ${
                   mode === 'login'
                     ? 'bg-indigo-600 text-white shadow'
                     : 'text-slate-400 hover:text-white'
@@ -211,7 +229,7 @@ export const AuthPage: React.FC = () => {
                   setMode('register');
                   setError(null);
                 }}
-                className={`rounded-lg py-2 text-sm font-semibold transition ${
+                className={`min-h-[40px] rounded-lg py-2 text-sm font-semibold transition ${
                   mode === 'register'
                     ? 'bg-indigo-600 text-white shadow'
                     : 'text-slate-400 hover:text-white'
@@ -222,39 +240,42 @@ export const AuthPage: React.FC = () => {
             </div>
 
             <h2 className="mt-6 text-xl font-bold text-white">
-              {mode === 'login' ? 'Welcome back' : 'Create your Buyer account'}
+              {mode === 'login' ? 'Welcome back' : 'Create your convention pass'}
             </h2>
             <p className="mt-1 text-xs text-slate-400">
               {mode === 'login'
-                ? 'Sign in with your email and password to access your Event Hubs.'
-                : 'Your Username becomes your public Display Name on event leaderboards and chat.'}
+                ? 'Sign in with your email and password to open your Event Hubs.'
+                : 'Your Display Name appears on event leaderboards and the meetup board.'}
             </p>
 
             {error && (
-              <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-500/15 px-3.5 py-2.5 text-xs font-medium text-rose-200">
+              <div
+                role="alert"
+                className="mt-4 rounded-xl border border-rose-500/40 bg-rose-500/15 px-3.5 py-2.5 text-xs font-medium text-rose-200"
+              >
                 {error}
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            <form onSubmit={handleSubmit} noValidate className="mt-5 space-y-4">
               {mode === 'register' && (
                 <div>
                   <label
                     htmlFor="auth-username"
-                    className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    className="mb-1.5 block text-xs font-semibold text-slate-300"
                   >
-                    Username (Display Name)
+                    Display Name
                   </label>
                   <input
                     id="auth-username"
                     type="text"
-                    required
-                    minLength={3}
-                    maxLength={28}
                     value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      if (error) setError(null);
+                    }}
                     placeholder="e.g. AkiraCosplay"
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
               )}
@@ -262,25 +283,27 @@ export const AuthPage: React.FC = () => {
               <div>
                 <label
                   htmlFor="auth-email"
-                  className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                  className="mb-1.5 block text-xs font-semibold text-slate-300"
                 >
                   Email Address
                 </label>
                 <input
                   id="auth-email"
                   type="email"
-                  required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (error) setError(null);
+                  }}
                   placeholder="you@example.com"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="auth-password"
-                  className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                  className="mb-1.5 block text-xs font-semibold text-slate-300"
                 >
                   Password
                 </label>
@@ -288,17 +311,18 @@ export const AuthPage: React.FC = () => {
                   <input
                     id="auth-password"
                     type={showPassword ? 'text' : 'password'}
-                    required
-                    minLength={6}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (error) setError(null);
+                    }}
                     placeholder="Minimum 6 characters"
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 pr-10 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 pr-11 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((p) => !p)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                    className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 hover:text-slate-200"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
                     {showPassword ? (
@@ -314,7 +338,8 @@ export const AuthPage: React.FC = () => {
                 <div className="flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
                   <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
                   <span>
-                    Starts automatically in <strong>Buyer Mode</strong>. Upgrade to Merchant anytime!
+                    Starts as an <strong>Attendee Pass</strong>. Unlock a booth anytime with a booth
+                    ticket code.
                   </span>
                 </div>
               )}
@@ -322,14 +347,14 @@ export const AuthPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={submitting}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60"
+                className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60"
               >
                 <span>
                   {submitting
                     ? 'Please wait...'
                     : mode === 'login'
                       ? 'Sign In'
-                      : 'Create Buyer Account'}
+                      : 'Create Account'}
                 </span>
                 <ArrowRight className="h-4 w-4" />
               </button>
@@ -337,16 +362,14 @@ export const AuthPage: React.FC = () => {
 
             <div className="my-5 flex items-center gap-3">
               <div className="h-px flex-1 bg-slate-800" />
-              <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                Or
-              </span>
+              <span className="text-[11px] font-medium text-slate-500">Or</span>
               <div className="h-px flex-1 bg-slate-800" />
             </div>
 
             <button
               type="button"
               onClick={() => void handleGoogleLogin()}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+              className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
             >
               <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
                 <path

@@ -11,9 +11,9 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { getSupabaseClient } from '../../context/AppContext';
 import { formatIdr, parseIdrInput } from '../../lib/ledgerEngine';
 import { soundFeedback } from '../../lib/soundFeedback';
+import { apiClient } from '../../services/apiClient';
 import type { DemoSeedDataset, Event, Tenant, TenantItem } from '../../types/types';
 
 interface BoothSetupPanelProps {
@@ -66,17 +66,6 @@ async function cropImageToSquareDataUrl(file: File, targetSize = 256): Promise<s
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
-}
-
-function createUuid(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
 }
 
 export const BoothSetupPanel: React.FC<BoothSetupPanelProps> = ({
@@ -143,36 +132,17 @@ export const BoothSetupPanel: React.FC<BoothSetupPanelProps> = ({
     setProfileNotice(null);
 
     try {
-      const supabase = getSupabaseClient();
-      const nowIso = new Date().toISOString();
-
-      if (supabase) {
-        const { error } = await supabase
-          .from('tenants')
-          .update({
-            booth_name: cleanName,
-            booth_number: cleanNumber,
-            description: description.trim(),
-            stamp_image_url: stampImageUrl,
-          })
-          .eq('id', tenant.id);
-
-        if (error) throw new Error(error.message);
-      }
+      const { tenant: updatedTenant } = await apiClient.updateBoothProfile(tenant.id, {
+        booth_name: cleanName,
+        booth_number: cleanNumber,
+        description: description.trim(),
+        stamp_image_url: stampImageUrl,
+      });
 
       onDatasetChange((prev) => ({
         ...prev,
         tenants: prev.tenants.map((t) =>
-          t.id === tenant.id
-            ? {
-                ...t,
-                booth_name: cleanName,
-                booth_number: cleanNumber,
-                description: description.trim(),
-                stamp_image_url: stampImageUrl,
-                updated_at: nowIso,
-              }
-            : t
+          t.id === updatedTenant.id ? updatedTenant : t
         ),
       }));
 
@@ -205,33 +175,12 @@ export const BoothSetupPanel: React.FC<BoothSetupPanelProps> = ({
     try {
       const nextSort =
         boothItems.reduce((max, i) => Math.max(max, i.sort_order), 0) + 1;
-      const newItem: TenantItem = {
-        id: createUuid(),
-        tenant_id: tenant.id,
+      const { item: newItem } = await apiClient.createBoothItem(tenant.id, {
         item_name: cleanName,
         price_idr: priceIdr,
         sort_order: nextSort,
         is_active: true,
-        created_at: new Date().toISOString(),
-      };
-
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('tenant_items')
-          .insert({
-            tenant_id: tenant.id,
-            item_name: cleanName,
-            price_idr: priceIdr,
-            sort_order: nextSort,
-            is_active: true,
-          })
-          .select('*')
-          .single();
-
-        if (error) throw new Error(error.message);
-        if (data) newItem.id = (data as TenantItem).id;
-      }
+      });
 
       onDatasetChange((prev) => ({
         ...prev,
@@ -265,19 +214,16 @@ export const BoothSetupPanel: React.FC<BoothSetupPanelProps> = ({
 
     setItemBusy(true);
     try {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        const { error } = await supabase
-          .from('tenant_items')
-          .update({ item_name: cleanName, price_idr: priceIdr })
-          .eq('id', itemId);
-        if (error) throw new Error(error.message);
-      }
+      const { item: updatedItem } = await apiClient.updateBoothItem(
+        tenant.id,
+        itemId,
+        { item_name: cleanName, price_idr: priceIdr }
+      );
 
       onDatasetChange((prev) => ({
         ...prev,
         tenant_items: prev.tenant_items.map((i) =>
-          i.id === itemId ? { ...i, item_name: cleanName, price_idr: priceIdr } : i
+          i.id === updatedItem.id ? updatedItem : i
         ),
       }));
 
@@ -292,26 +238,21 @@ export const BoothSetupPanel: React.FC<BoothSetupPanelProps> = ({
 
   const handleToggleItemActive = async (item: TenantItem) => {
     const nextActive = !item.is_active;
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase
-        .from('tenant_items')
-        .update({ is_active: nextActive })
-        .eq('id', item.id);
-    }
+    const { item: updatedItem } = await apiClient.updateBoothItem(
+      tenant.id,
+      item.id,
+      { is_active: nextActive }
+    );
     onDatasetChange((prev) => ({
       ...prev,
       tenant_items: prev.tenant_items.map((i) =>
-        i.id === item.id ? { ...i, is_active: nextActive } : i
+        i.id === updatedItem.id ? updatedItem : i
       ),
     }));
   };
 
   const handleDeleteItem = async (itemId: string) => {
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      await supabase.from('tenant_items').delete().eq('id', itemId);
-    }
+    await apiClient.deleteBoothItem(tenant.id, itemId);
     onDatasetChange((prev) => ({
       ...prev,
       tenant_items: prev.tenant_items.filter((i) => i.id !== itemId),
